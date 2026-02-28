@@ -5,7 +5,25 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
+
+
+class FileEntry(TypedDict):
+    """Local or remote file entry: hash + modification time."""
+    hash: str
+    mtime: float
+
+
+class SyncedFileEntry(TypedDict):
+    """Manifest entry after a sync: adds the sync timestamp."""
+    hash: str
+    mtime: float
+    last_synced: str
+
+
+# Type aliases for readability
+LocalManifest = dict[str, FileEntry]
+RemoteManifest = dict[str, FileEntry]
 
 MANIFEST_FILE = Path.home() / ".claudesync" / "manifest.json"
 
@@ -46,13 +64,13 @@ def save_manifest(manifest: dict[str, Any]) -> None:
         raise
 
 
-def build_local_manifest(file_paths: list[str]) -> dict[str, dict[str, Any]]:
+def build_local_manifest(file_paths: list[str]) -> LocalManifest:
     """
     Build a manifest dict for the given list of file paths.
 
     Returns: { "<abs_path>": { "hash": "sha256...", "mtime": 1234567890 } }
     """
-    result: dict[str, dict[str, Any]] = {}
+    result: LocalManifest = {}
     for path_str in file_paths:
         p = Path(path_str)
         if p.exists() and p.is_file():
@@ -65,7 +83,7 @@ def build_local_manifest(file_paths: list[str]) -> dict[str, dict[str, Any]]:
 
 def update_manifest_for_remote(
     remote_name: str,
-    local_manifest: dict[str, dict[str, Any]],
+    local_manifest: LocalManifest,
 ) -> None:
     """Update the manifest entries for a remote after a successful sync."""
     manifest = load_manifest()
@@ -84,7 +102,7 @@ def update_manifest_for_remote(
     save_manifest(manifest)
 
 
-def get_remote_manifest(remote_name: str) -> dict[str, dict[str, Any]]:
+def get_remote_manifest(remote_name: str) -> dict[str, SyncedFileEntry]:
     """Get the stored manifest for a specific remote."""
     manifest = load_manifest()
     return manifest.get(remote_name, {})

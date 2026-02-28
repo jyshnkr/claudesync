@@ -204,7 +204,8 @@ def push(
         finally:
             sanitized_tmp.unlink(missing_ok=True)
 
-    update_manifest_for_remote(remote_name, local_manifest)
+    if not summary["errors"]:
+        update_manifest_for_remote(remote_name, local_manifest)
 
     _print_summary(summary, "push")
 
@@ -254,7 +255,8 @@ def pull(
         finally:
             tmp_claude_json.unlink(missing_ok=True)
 
-    update_manifest_for_remote(remote_name, local_manifest)
+    if not summary["errors"]:
+        update_manifest_for_remote(remote_name, local_manifest)
 
     _print_summary(summary, "pull")
 

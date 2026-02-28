@@ -25,8 +25,11 @@ def sanitize_claude_json(source: Path = CLAUDE_JSON) -> dict[str, Any]:
     if not source.exists():
         return {}
 
-    with source.open() as f:
-        data = json.load(f)
+    try:
+        with source.open() as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Cannot read {source}: invalid JSON ({e}). Fix or delete the file.") from e
 
     return {k: v for k, v in data.items() if k not in SENSITIVE_FIELDS}
 
@@ -54,19 +57,37 @@ def merge_pulled_claude_json(pulled_path: Path, local_path: Path = CLAUDE_JSON) 
     Local config has auth fields that must be preserved.
     Result: remote non-auth fields + local auth fields.
     """
-    with pulled_path.open() as f:
-        remote_data: dict[str, Any] = json.load(f)
+    try:
+        with pulled_path.open() as f:
+            remote_data: dict[str, Any] = json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"Pulled {pulled_path} contains invalid JSON ({e}). "
+            "The remote file may be corrupted."
+        ) from e
 
     local_data: dict[str, Any] = {}
     if local_path.exists():
-        with local_path.open() as f:
-            local_data = json.load(f)
+        try:
+            with local_path.open() as f:
+                local_data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"Local {local_path} contains invalid JSON ({e}). "
+                "Fix or delete the file before syncing."
+            ) from e
 
-    # Start with remote (has updated prefs), overlay local sensitive fields
+    # Parse both files successfully before writing — then use atomic replace
     merged = {**remote_data}
     for field in SENSITIVE_FIELDS:
         if field in local_data:
             merged[field] = local_data[field]
 
-    with local_path.open("w") as f:
-        json.dump(merged, f, indent=2)
+    tmp = local_path.with_suffix(".tmp")
+    try:
+        with tmp.open("w") as f:
+            json.dump(merged, f, indent=2)
+        tmp.replace(local_path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise

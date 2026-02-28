@@ -1,6 +1,7 @@
 """Conflict detection and last-write-wins resolution."""
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -137,15 +138,14 @@ def apply_conflict_resolutions(
             # Local is the loser — back it up before rsync overwrites it
             local_path = Path(fc.path)
             if local_path.exists():
-                backup_path = backup_file(local_path, backup_count)
-                fc = FileConflict(
-                    path=fc.path,
-                    state=fc.state,
-                    local_mtime=fc.local_mtime,
-                    remote_mtime=fc.remote_mtime,
-                    winner=fc.winner,
-                    backup_path=str(backup_path),
-                )
+                try:
+                    backup_path = backup_file(local_path, backup_count)
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Failed to backup {fc.path} before sync: {e}. "
+                        "Aborting to prevent data loss."
+                    ) from e
+                fc = dataclasses.replace(fc, backup_path=str(backup_path))
         updated.append(fc)
     return ConflictReport(conflicts=updated)
 

@@ -42,6 +42,10 @@ class SyncSettings:
     strategy: str = "last-write-wins"
     backup_count: int = 10
 
+    def __post_init__(self) -> None:
+        if self.backup_count < 1:
+            raise ValueError(f"backup_count must be >= 1, got {self.backup_count}")
+
 
 @dataclass
 class Config:
@@ -65,8 +69,14 @@ def load_config() -> Config:
     if not CONFIG_FILE.exists():
         return Config()
 
-    with CONFIG_FILE.open("rb") as f:
-        raw = tomllib.load(f)
+    try:
+        with CONFIG_FILE.open("rb") as f:
+            raw = tomllib.load(f)
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(
+            f"Config file {CONFIG_FILE} is corrupted ({e}). "
+            "Fix or delete it to continue."
+        ) from e
 
     remotes: dict[str, Remote] = {}
     for name, data in raw.get("remotes", {}).items():
@@ -79,9 +89,16 @@ def load_config() -> Config:
         )
 
     sync_data = raw.get("sync", {})
+    try:
+        backup_count = int(sync_data.get("backup_count", 10))
+    except (ValueError, TypeError) as e:
+        raise ValueError(
+            f"Config sync.backup_count must be an integer, got: "
+            f"{sync_data.get('backup_count')!r}"
+        ) from e
     sync = SyncSettings(
         strategy=sync_data.get("strategy", "last-write-wins"),
-        backup_count=int(sync_data.get("backup_count", 10)),
+        backup_count=backup_count,
     )
 
     projects = raw.get("projects", {}).get("paths", [])
@@ -113,8 +130,14 @@ def save_config(config: Config) -> None:
         "backup_count": config.sync.backup_count,
     }
 
-    with CONFIG_FILE.open("wb") as f:
-        tomli_w.dump(data, f)
+    tmp = CONFIG_FILE.with_suffix(".tmp")
+    try:
+        with tmp.open("wb") as f:
+            tomli_w.dump(data, f)
+        tmp.replace(CONFIG_FILE)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _validate_remote(name: str, data: dict) -> None:

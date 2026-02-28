@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, call
 
 from claudesync.config import Remote
-from claudesync.engine import Engine, _count_transferred, _empty_result
+from claudesync.engine import Engine, SyncError, _count_transferred, _empty_result
 
 
 @pytest.fixture
@@ -109,15 +109,15 @@ def test_get_remote_file_hashes_success(engine):
     assert result == expected
 
 
-def test_get_remote_file_hashes_empty_on_failure(engine):
+def test_get_remote_file_hashes_raises_on_ssh_failure(engine):
     mock_result = MagicMock()
     mock_result.returncode = 1
     mock_result.stdout = ""
+    mock_result.stderr = "ssh: connect to host"
 
     with patch("claudesync.engine.subprocess.run", return_value=mock_result):
-        result = engine.get_remote_file_hashes(["/some/file"])
-
-    assert result == {}
+        with pytest.raises(SyncError, match="SSH command failed"):
+            engine.get_remote_file_hashes(["/some/file"])
 
 
 def test_get_remote_file_hashes_empty_list(engine):

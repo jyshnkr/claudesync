@@ -15,24 +15,6 @@ GLOBAL_SYNC_INCLUDES = [
     "plugins/blocklist.json",
 ]
 
-# Paths under ~/.claude/ to exclude (relative to ~/.claude/)
-GLOBAL_SYNC_EXCLUDES = [
-    "debug/",
-    "ide/",
-    "shell-snapshots/",
-    "backups/",
-    "cache/",
-    "downloads/",
-    "todos/",
-    "plugins/cache/",
-    "plugins/marketplaces/",
-    "plugins/install-counts-cache.json",
-    "plugins/known_marketplaces.json",
-    "mcp-needs-auth-cache.json",
-    # Exclude everything else not explicitly included
-    "*",
-]
-
 # Per-project files/dirs to sync (relative to project root)
 PROJECT_SYNC_ITEMS = [
     ".claude/settings.json",
@@ -42,7 +24,13 @@ PROJECT_SYNC_ITEMS = [
 
 
 def build_global_filter_args() -> list[str]:
-    """Build rsync filter args for global ~/.claude/ sync."""
+    """Build rsync filter args for global ~/.claude/ sync.
+
+    Only GLOBAL_SYNC_INCLUDES is needed: rsync processes rules top-to-bottom,
+    so an explicit include list followed by a single '- *' catch-all is both
+    sufficient and safer than maintaining a separate exclude list — any new
+    ~/.claude/ subdirectory is automatically excluded unless added to INCLUDES.
+    """
     args: list[str] = []
 
     # Protect included directories so rsync traverses into them
@@ -52,19 +40,10 @@ def build_global_filter_args() -> list[str]:
         else:
             args += ["--filter", f"+ {item}"]
 
-    # Exclude everything else
+    # Exclude everything not explicitly included above
     args += ["--filter", "- *"]
 
     return args
-
-
-def build_project_rsync_items(project_path: Path) -> list[str]:
-    """Return list of paths to rsync for a given project."""
-    items = []
-    for item in PROJECT_SYNC_ITEMS:
-        full = project_path / item
-        items.append(str(full))
-    return items
 
 
 def get_global_include_paths() -> list[str]:

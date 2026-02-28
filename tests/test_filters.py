@@ -4,9 +4,7 @@ from pathlib import Path
 
 from claudesync.filters import (
     build_global_filter_args,
-    build_project_rsync_items,
     GLOBAL_SYNC_INCLUDES,
-    GLOBAL_SYNC_EXCLUDES,
     PROJECT_SYNC_ITEMS,
 )
 
@@ -33,26 +31,11 @@ def test_filter_args_alternate_filter_flag():
     assert all(f == "--filter" for f in flags)
 
 
-def test_project_rsync_items(tmp_path):
-    items = build_project_rsync_items(tmp_path)
-    paths = [Path(i) for i in items]
-    names = [p.name for p in paths]
-    assert "settings.json" in names
-    assert "CLAUDE.md" in names
-    assert ".mcp.json" in names
-
-
-def test_global_sync_excludes_debug():
-    assert "debug/" in GLOBAL_SYNC_EXCLUDES
-
-
-def test_global_sync_excludes_cache():
-    assert "cache/" in GLOBAL_SYNC_EXCLUDES
-
-
 def test_global_sync_includes_plugins_installed():
     assert "plugins/installed_plugins.json" in GLOBAL_SYNC_INCLUDES
 
 
-def test_global_sync_excludes_plugins_cache():
-    assert "plugins/cache/" in GLOBAL_SYNC_EXCLUDES
+def test_project_sync_items_contains_expected():
+    assert ".claude/settings.json" in PROJECT_SYNC_ITEMS
+    assert "CLAUDE.md" in PROJECT_SYNC_ITEMS
+    assert ".mcp.json" in PROJECT_SYNC_ITEMS

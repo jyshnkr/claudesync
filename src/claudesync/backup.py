@@ -1,0 +1,112 @@
+"""Backup management for conflict resolution."""
+from __future__ import annotations
+
+import shutil
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+BACKUP_DIR = Path.home() / ".claudesync" / "backups"
+
+
+@dataclass
+class BackupEntry:
+    backup_id: str          # timestamp string, e.g. "20260228T143052"
+    original_path: str
+    backup_path: Path
+    created_at: str
+
+
+def backup_file(original: Path, keep_count: int = 10) -> Path:
+    """
+    Backup a file to ~/.claudesync/backups/<timestamp>/<original_path_structure>.
+    Returns the path to the backup file.
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    # Strip leading / to make a relative path inside the backup dir
+    rel = str(original).lstrip("/")
+    dest = BACKUP_DIR / ts / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(original, dest)
+
+    _rotate_backups(keep_count)
+    return dest
+
+
+def list_backups() -> list[BackupEntry]:
+    """List all backups sorted newest-first."""
+    if not BACKUP_DIR.exists():
+        return []
+
+    entries: list[BackupEntry] = []
+    for ts_dir in sorted(BACKUP_DIR.iterdir(), reverse=True):
+        if not ts_dir.is_dir():
+            continue
+        for file_path in ts_dir.rglob("*"):
+            if file_path.is_file():
+                # Reconstruct original path
+                rel = str(file_path.relative_to(ts_dir))
+                original = "/" + rel
+                entries.append(BackupEntry(
+                    backup_id=ts_dir.name,
+                    original_path=original,
+                    backup_path=file_path,
+                    created_at=_parse_ts(ts_dir.name),
+                ))
+    return entries
+
+
+def restore_backup(backup_id: str, original_path: str | None = None) -> list[Path]:
+    """
+    Restore files from a backup identified by backup_id.
+
+    If original_path is given, restore only that file.
+    Otherwise restore all files in the backup.
+    Returns list of restored paths.
+    """
+    ts_dir = BACKUP_DIR / backup_id
+    if not ts_dir.exists():
+        raise ValueError(f"Backup '{backup_id}' not found in {BACKUP_DIR}")
+
+    restored: list[Path] = []
+
+    if original_path:
+        rel = original_path.lstrip("/")
+        backup_file_path = ts_dir / rel
+        if not backup_file_path.exists():
+            raise FileNotFoundError(f"'{original_path}' not found in backup '{backup_id}'")
+        dest = Path(original_path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(backup_file_path, dest)
+        restored.append(dest)
+    else:
+        for src in ts_dir.rglob("*"):
+            if src.is_file():
+                rel = str(src.relative_to(ts_dir))
+                dest = Path("/" + rel)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dest)
+                restored.append(dest)
+
+    return restored
+
+
+def _rotate_backups(keep_count: int) -> None:
+    """Remove oldest backups, keeping only keep_count entries."""
+    if not BACKUP_DIR.exists():
+        return
+    ts_dirs = sorted(
+        [d for d in BACKUP_DIR.iterdir() if d.is_dir()],
+        reverse=True,
+    )
+    for old_dir in ts_dirs[keep_count:]:
+        shutil.rmtree(old_dir, ignore_errors=True)
+
+
+def _parse_ts(ts: str) -> str:
+    """Convert '20260228T143052' to ISO-like readable string."""
+    try:
+        dt = datetime.strptime(ts, "%Y%m%dT%H%M%S")
+        return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+    except ValueError:
+        return ts

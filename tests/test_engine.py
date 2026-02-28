@@ -1,0 +1,144 @@
+"""Tests for rsync engine — command construction (mock subprocess)."""
+import json
+import pytest
+from pathlib import Path
+from unittest.mock import MagicMock, patch, call
+
+from claudesync.config import Remote
+from claudesync.engine import Engine, _count_transferred, _empty_result
+
+
+@pytest.fixture
+def remote():
+    return Remote(host="192.168.1.100", user="alice", ssh_key="~/.ssh/id_ed25519", remote_home="/home/alice")
+
+
+@pytest.fixture
+def engine(remote):
+    return Engine(remote)
+
+
+def test_ssh_cmd_includes_key(engine, remote):
+    cmd = engine._ssh_cmd()
+    assert "-i" in cmd
+    key_idx = cmd.index("-i")
+    assert "id_ed25519" in cmd[key_idx + 1]
+
+
+def test_ssh_cmd_includes_address(engine, remote):
+    cmd = engine._ssh_cmd()
+    assert "alice@192.168.1.100" in cmd
+
+
+def test_base_rsync_no_dry_run(engine):
+    cmd = engine._base_rsync(dry_run=False)
+    assert "rsync" in cmd
+    assert "-avz" in cmd
+    assert "--dry-run" not in cmd
+
+
+def test_base_rsync_with_dry_run(engine):
+    cmd = engine._base_rsync(dry_run=True)
+    assert "--dry-run" in cmd
+
+
+def test_check_connection_success(engine):
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    with patch("claudesync.engine.subprocess.run", return_value=mock_result):
+        assert engine.check_connection() is True
+
+
+def test_check_connection_failure(engine):
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    with patch("claudesync.engine.subprocess.run", return_value=mock_result):
+        assert engine.check_connection() is False
+
+
+def test_push_calls_rsync(engine, tmp_path):
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "sending file.txt\n"
+    mock_result.stderr = ""
+
+    sanitized = tmp_path / "sanitized.json"
+    sanitized.write_text("{}")
+
+    with patch("claudesync.engine.subprocess.run", return_value=mock_result) as mock_run:
+        summary = engine.push([], sanitized_claude_json=sanitized)
+
+    assert mock_run.called
+    assert summary["errors"] == []
+
+
+def test_pull_calls_rsync(engine, tmp_path):
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = ""
+    mock_result.stderr = ""
+
+    with patch("claudesync.engine.subprocess.run", return_value=mock_result) as mock_run:
+        summary = engine.pull([])
+
+    assert mock_run.called
+    assert summary["errors"] == []
+
+
+def test_dry_run_returns_output(engine):
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "would transfer file.txt"
+    mock_result.stderr = ""
+
+    with patch("claudesync.engine.subprocess.run", return_value=mock_result):
+        output = engine.dry_run([])
+
+    assert "Global" in output
+
+
+def test_get_remote_file_hashes_success(engine):
+    expected = {"/home/alice/.claude/settings.json": {"hash": "abc", "mtime": 1000.0}}
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = json.dumps(expected)
+
+    with patch("claudesync.engine.subprocess.run", return_value=mock_result):
+        result = engine.get_remote_file_hashes(["/home/alice/.claude/settings.json"])
+
+    assert result == expected
+
+
+def test_get_remote_file_hashes_empty_on_failure(engine):
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    mock_result.stdout = ""
+
+    with patch("claudesync.engine.subprocess.run", return_value=mock_result):
+        result = engine.get_remote_file_hashes(["/some/file"])
+
+    assert result == {}
+
+
+def test_get_remote_file_hashes_empty_list(engine):
+    # Should not call subprocess for empty list
+    with patch("claudesync.engine.subprocess.run") as mock_run:
+        result = engine.get_remote_file_hashes([])
+    assert result == {}
+    mock_run.assert_not_called()
+
+
+def test_count_transferred_counts_paths():
+    output = "sending incremental file list\nsettings.json\nhistory.jsonl\n"
+    count = _count_transferred(output)
+    assert count >= 1
+
+
+def test_count_transferred_empty():
+    assert _count_transferred("") == 0
+
+
+def test_empty_result():
+    r = _empty_result()
+    assert r.returncode == 0
+    assert r.stdout == ""

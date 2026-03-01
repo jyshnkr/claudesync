@@ -128,6 +128,8 @@ class Engine:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         except subprocess.TimeoutExpired as e:
             raise SyncError(f"SSH timed out getting remote file hashes: {e}") from e
+        except FileNotFoundError as e:
+            raise SyncError(f"SSH executable not found: {e}") from e
         if result.returncode != 0:
             raise SyncError(f"SSH command failed: {result.stderr.strip()}")
         try:

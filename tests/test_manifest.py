@@ -75,3 +75,11 @@ def test_update_manifest_for_remote(manifest_file):
 def test_get_remote_manifest_empty_for_unknown(manifest_file):
     result = get_remote_manifest("unknown-remote")
     assert result == {}
+
+
+def test_load_manifest_rejects_non_dict_json(manifest_file):
+    """load_manifest must reject a manifest file that is not a JSON object."""
+    manifest_file.write_text(json.dumps([1, 2, 3]))
+
+    with pytest.raises(ValueError, match="corrupted"):
+        load_manifest()

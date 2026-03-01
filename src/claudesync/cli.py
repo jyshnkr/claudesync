@@ -227,7 +227,13 @@ def pull(
             tmp_claude_json.unlink(missing_ok=True)
 
     if not summary.errors:
-        update_manifest_for_remote(remote_name, local_manifest)
+        local_files = get_global_include_paths()
+        for proj in project_paths:
+            for item in PROJECT_SYNC_ITEMS:
+                p = proj / item
+                if p.exists():
+                    local_files.append(str(p))
+        update_manifest_for_remote(remote_name, build_local_manifest(local_files))
 
     _print_summary(summary, "pull")
 
@@ -359,8 +365,33 @@ def _build_manifests(
             if p.exists():
                 local_files.append(str(p))
     local_manifest = build_local_manifest(local_files)
-    remote_manifest = engine.get_remote_file_hashes(list(local_manifest.keys()))
+
+    # Translate local paths to remote paths before querying remote hashes
+    remote_paths = [_local_to_remote_path(p, project_paths, engine.remote) for p in local_manifest]
+    raw_remote = engine.get_remote_file_hashes(remote_paths)
+
+    # Re-key the remote result back to local path keys
+    remote_manifest: dict = {}
+    for local_path in local_manifest:
+        remote_path = _local_to_remote_path(local_path, project_paths, engine.remote)
+        if remote_path in raw_remote:
+            remote_manifest[local_path] = raw_remote[remote_path]
+
     return local_manifest, remote_manifest
+
+
+def _local_to_remote_path(local_path: str, project_paths: list[Path], remote: Remote) -> str:
+    """Translate a local absolute path to its remote equivalent."""
+    local_home = str(Path.home())
+    for proj in project_paths:
+        proj_str = str(proj)
+        if local_path.startswith(proj_str + "/") or local_path == proj_str:
+            rel = local_path[len(proj_str):]
+            return f"{remote.remote_home}/{proj.name}{rel}"
+    if local_path.startswith(local_home + "/") or local_path == local_home:
+        rel = local_path[len(local_home):]
+        return f"{remote.remote_home}{rel}"
+    return local_path
 
 
 def _print_conflict_report(report: ConflictReport) -> None:

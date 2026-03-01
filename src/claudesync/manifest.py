@@ -43,12 +43,18 @@ def load_manifest() -> dict[str, Any]:
         return {}
     try:
         with MANIFEST_FILE.open() as f:
-            return json.load(f)
+            data = json.load(f)
     except json.JSONDecodeError as e:
         raise ValueError(
             f"Manifest file {MANIFEST_FILE} is corrupted ({e}). "
             "Delete or repair it to continue."
         ) from e
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Manifest file {MANIFEST_FILE} is corrupted (expected object, got {type(data).__name__}). "
+            "Delete or repair it to continue."
+        )
+    return data
 
 
 def save_manifest(manifest: dict[str, Any]) -> None:

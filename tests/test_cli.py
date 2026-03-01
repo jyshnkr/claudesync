@@ -163,3 +163,25 @@ def test_diff_includes_project_files(mock_config, connected_engine, tmp_path):
     # build_local_manifest should have received CLAUDE.md in the file list
     call_args = mock_build.call_args[0][0]
     assert str(claude_md) in call_args
+
+
+def test_pull_rebuilds_manifest_after_sync(mock_config, connected_engine, tmp_path):
+    """After a successful pull, manifest should be rebuilt from post-sync local state."""
+    with patch("claudesync.cli.load_config", return_value=mock_config), \
+         patch("claudesync.cli.Engine", return_value=connected_engine), \
+         patch("claudesync.cli.get_global_include_paths", return_value=[]), \
+         patch("claudesync.cli.build_local_manifest", return_value={}) as mock_build, \
+         patch("claudesync.cli.get_remote_manifest", return_value={}), \
+         patch("claudesync.cli.update_manifest_for_remote") as mock_update, \
+         patch("claudesync.cli.merge_pulled_claude_json"), \
+         patch("tempfile.NamedTemporaryFile") as mock_ntf:
+        tmp_file = tmp_path / "empty.json"
+        tmp_file.write_text("")
+        mock_ntf.return_value.__enter__.return_value.name = str(tmp_file)
+
+        result = runner.invoke(app, ["pull", REMOTE_NAME])
+
+    assert result.exit_code == 0
+    # build_local_manifest is called twice: once for _build_manifests, once for rebuild
+    assert mock_build.call_count == 2
+    mock_update.assert_called_once()

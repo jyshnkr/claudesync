@@ -203,3 +203,11 @@ def test_check_connection_handles_timeout(engine):
     with patch("claudesync.engine.subprocess.run",
                side_effect=subprocess.TimeoutExpired(cmd="ssh", timeout=10)):
         assert engine.check_connection() is False
+
+
+def test_get_remote_file_hashes_raises_on_missing_ssh(engine):
+    """FileNotFoundError (missing ssh binary) is wrapped as SyncError."""
+    with patch("claudesync.engine.subprocess.run",
+               side_effect=FileNotFoundError("No such file: ssh")):
+        with pytest.raises(SyncError, match="SSH executable not found"):
+            engine.get_remote_file_hashes(["/some/file"])

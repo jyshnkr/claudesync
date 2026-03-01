@@ -83,10 +83,13 @@ def merge_pulled_claude_json(pulled_path: Path, local_path: Path = CLAUDE_JSON) 
         if field in local_data:
             merged[field] = local_data[field]
 
+    original_mode = local_path.stat().st_mode if local_path.exists() else None
     tmp = local_path.with_suffix(".tmp")
     try:
         with tmp.open("w") as f:
             json.dump(merged, f, indent=2)
+        if original_mode is not None:
+            tmp.chmod(original_mode)
         tmp.replace(local_path)
     except Exception:
         tmp.unlink(missing_ok=True)

@@ -134,10 +134,13 @@ def save_config(config: Config) -> None:
         "backup_count": config.sync.backup_count,
     }
 
+    original_mode = CONFIG_FILE.stat().st_mode if CONFIG_FILE.exists() else None
     tmp = CONFIG_FILE.with_suffix(".tmp")
     try:
         with tmp.open("wb") as f:
             tomli_w.dump(data, f)
+        if original_mode is not None:
+            tmp.chmod(original_mode)
         tmp.replace(CONFIG_FILE)
     except Exception:
         tmp.unlink(missing_ok=True)

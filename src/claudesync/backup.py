@@ -86,13 +86,20 @@ def restore_backup(backup_id: str, original_path: str | None = None) -> list[Pat
         shutil.copy2(backup_file_path, dest)
         restored.append(dest)
     else:
+        backup_root = ts_dir.resolve()
+        home_root = Path.home().resolve()
         for src in ts_dir.rglob("*"):
-            if src.is_file():
-                rel = str(src.relative_to(ts_dir))
-                dest = Path("/" + rel)
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dest)
-                restored.append(dest)
+            if not src.is_file():
+                continue
+            if not src.resolve().is_relative_to(backup_root):
+                raise ValueError(f"Path traversal detected in backup archive: '{src}'")
+            rel = str(src.relative_to(ts_dir))
+            dest = Path("/" + rel)
+            if not dest.resolve().is_relative_to(home_root):
+                raise ValueError(f"Restore destination outside home directory: '{dest}'")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+            restored.append(dest)
 
     return restored
 

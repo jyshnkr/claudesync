@@ -152,3 +152,19 @@ def test_merge_raises_on_corrupted_local_json(tmp_path):
 
     with pytest.raises(ValueError, match="invalid JSON"):
         merge_pulled_claude_json(pulled, local)
+
+
+def test_merge_preserves_file_permissions(tmp_path):
+    """merge_pulled_claude_json must preserve original file permissions."""
+    local = tmp_path / "local.json"
+    local.write_text(json.dumps({"showSpinnerTree": False}))
+    local.chmod(0o600)
+
+    pulled = tmp_path / "pulled.json"
+    pulled.write_text(json.dumps({"showSpinnerTree": True}))
+
+    merge_pulled_claude_json(pulled, local)
+
+    import stat
+    mode = local.stat().st_mode & 0o777
+    assert mode == 0o600

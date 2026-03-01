@@ -54,10 +54,13 @@ def load_manifest() -> dict[str, Any]:
 def save_manifest(manifest: dict[str, Any]) -> None:
     """Save manifest to ~/.claudesync/manifest.json."""
     MANIFEST_FILE.parent.mkdir(parents=True, exist_ok=True)
+    original_mode = MANIFEST_FILE.stat().st_mode if MANIFEST_FILE.exists() else None
     tmp = MANIFEST_FILE.with_suffix(".tmp")
     try:
         with tmp.open("w") as f:
             json.dump(manifest, f, indent=2)
+        if original_mode is not None:
+            tmp.chmod(original_mode)
         tmp.replace(MANIFEST_FILE)
     except Exception:
         tmp.unlink(missing_ok=True)

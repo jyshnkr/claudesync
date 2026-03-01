@@ -98,7 +98,9 @@ def test_restore_backup_single_file(tmp_path, backup_dir, monkeypatch):
     assert src.read_text() == "original"
 
 
-def test_restore_backup_all_files(tmp_path, backup_dir):
+def test_restore_backup_all_files(tmp_path, backup_dir, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
     src = tmp_path / "all_files.txt"
     src.write_text("data")
     dest = _ts_backup(src, "20260101T130000")
@@ -121,3 +123,22 @@ def test_restore_backup_rejects_path_traversal(tmp_path, backup_dir):
 
     with pytest.raises(ValueError, match="traversal"):
         restore_backup("20260101T000000", "/../../../etc/passwd")
+
+
+def test_restore_all_rejects_dest_outside_home(tmp_path, backup_dir, monkeypatch):
+    """Bulk restore must reject files whose destination is outside $HOME."""
+    # Set home to a subdirectory of tmp_path so other tmp paths are "outside"
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+
+    # Build a backup entry that would restore to tmp_path/outside.txt
+    # which is outside our mocked home dir
+    ts_dir = backup_dir / "20260101T000000"
+    outside_rel = str(tmp_path / "outside.txt").lstrip("/")
+    outside_backup = ts_dir / outside_rel
+    outside_backup.parent.mkdir(parents=True, exist_ok=True)
+    outside_backup.write_text("evil")
+
+    with pytest.raises(ValueError, match="outside home directory"):
+        restore_backup("20260101T000000")

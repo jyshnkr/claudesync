@@ -3,7 +3,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch
 
-from claudesync.backup import backup_file, list_backups, restore_backup
+from claudesync.backup import _atomic_copy, backup_file, list_backups, restore_backup
 
 
 @pytest.fixture
@@ -98,7 +98,9 @@ def test_restore_backup_single_file(tmp_path, backup_dir, monkeypatch):
     assert src.read_text() == "original"
 
 
-def test_restore_backup_all_files(tmp_path, backup_dir):
+def test_restore_backup_all_files(tmp_path, backup_dir, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
     src = tmp_path / "all_files.txt"
     src.write_text("data")
     dest = _ts_backup(src, "20260101T130000")
@@ -121,3 +123,62 @@ def test_restore_backup_rejects_path_traversal(tmp_path, backup_dir):
 
     with pytest.raises(ValueError, match="traversal"):
         restore_backup("20260101T000000", "/../../../etc/passwd")
+
+
+@pytest.mark.parametrize("bad_id", ["..", ".", "a/..", "../etc", "../../etc"])
+def test_restore_backup_rejects_malicious_backup_id(bad_id):
+    """restore_backup must reject backup_id values that are not a single safe segment."""
+    with pytest.raises(ValueError, match="Invalid backup_id"):
+        restore_backup(bad_id)
+
+
+def test_restore_backup_rejects_file_at_backup_id_path(backup_dir):
+    """restore_backup must reject a backup_id that points to a regular file, not a dir."""
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    (backup_dir / "20260101T000000").write_text("not a directory")
+
+    with pytest.raises(ValueError, match="not found"):
+        restore_backup("20260101T000000")
+
+
+def test_restore_all_rejects_dest_outside_home(tmp_path, backup_dir, monkeypatch):
+    """Bulk restore must reject files whose destination is outside $HOME."""
+    # Set home to a subdirectory of tmp_path so other tmp paths are "outside"
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+
+    # Build a backup entry that would restore to tmp_path/outside.txt
+    # which is outside our mocked home dir
+    ts_dir = backup_dir / "20260101T000000"
+    outside_rel = str(tmp_path / "outside.txt").lstrip("/")
+    outside_backup = ts_dir / outside_rel
+    outside_backup.parent.mkdir(parents=True, exist_ok=True)
+    outside_backup.write_text("evil")
+
+    with pytest.raises(ValueError, match="outside home directory"):
+        restore_backup("20260101T000000")
+
+
+def test_atomic_copy_rejects_symlink_dest(tmp_path):
+    """_atomic_copy must reject dest that is already a symlink."""
+    src = tmp_path / "src.txt"
+    src.write_text("data")
+    real = tmp_path / "real.txt"
+    real.write_text("x")
+    link = tmp_path / "link.txt"
+    link.symlink_to(real)
+    with pytest.raises(ValueError, match="symlink"):
+        _atomic_copy(src, link)
+
+
+def test_atomic_copy_rejects_symlink_parent(tmp_path):
+    """_atomic_copy must reject dest whose parent directory is a symlink."""
+    src = tmp_path / "src.txt"
+    src.write_text("data")
+    real_dir = tmp_path / "real_dir"
+    real_dir.mkdir()
+    link_dir = tmp_path / "link_dir"
+    link_dir.symlink_to(real_dir)
+    with pytest.raises(ValueError, match="symlink"):
+        _atomic_copy(src, link_dir / "dest.txt")

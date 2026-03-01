@@ -81,6 +81,7 @@ class Engine:
         # Step 3: .claude.json (sanitized on push, temp dest on pull)
         if claude_json_path:
             res = self._rsync_claude_json(claude_json_path, direction=direction, dry_run=False)
+            summary.files_transferred += _count_transferred(res.stdout)
             if res.returncode != 0:
                 summary.errors.append(res.stderr)
 
@@ -128,6 +129,8 @@ class Engine:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         except subprocess.TimeoutExpired as e:
             raise SyncError(f"SSH timed out getting remote file hashes: {e}") from e
+        except FileNotFoundError as e:
+            raise SyncError(f"SSH executable not found: {e}") from e
         if result.returncode != 0:
             raise SyncError(f"SSH command failed: {result.stderr.strip()}")
         try:
@@ -167,7 +170,7 @@ class Engine:
             cmd.append("--dry-run")
         return cmd
 
-    def _rsync_global(self, direction: SyncDirection, dry_run: bool) -> subprocess.CompletedProcess:
+    def _rsync_global(self, *, direction: SyncDirection, dry_run: bool) -> subprocess.CompletedProcess:
         """Sync ~/.claude/ directory."""
         local = str(Path.home() / ".claude") + "/"
         remote = f"{self.remote.address}:{self.remote.remote_home}/.claude/"
@@ -183,7 +186,7 @@ class Engine:
 
         return subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
-    def _rsync_project(self, project_path: Path, direction: SyncDirection, dry_run: bool) -> subprocess.CompletedProcess:
+    def _rsync_project(self, project_path: Path, *, direction: SyncDirection, dry_run: bool) -> subprocess.CompletedProcess:
         """Sync per-project files (.claude/settings.json, CLAUDE.md, .mcp.json)."""
         results: list[subprocess.CompletedProcess] = []
         remote_proj = f"{self.remote.address}:{self.remote.remote_home}/{project_path.name}/"

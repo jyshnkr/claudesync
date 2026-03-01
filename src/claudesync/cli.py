@@ -227,7 +227,7 @@ def pull(
             tmp_claude_json.unlink(missing_ok=True)
 
     if not summary.errors:
-        update_manifest_for_remote(remote_name, local_manifest)
+        update_manifest_for_remote(remote_name, build_local_manifest(_collect_local_files(project_paths)))
 
     _print_summary(summary, "pull")
 
@@ -347,20 +347,52 @@ def _require_connection(engine: Engine, remote: Remote) -> None:
             raise typer.Exit(1)
 
 
-def _build_manifests(
-    engine: Engine,
-    project_paths: list[Path],
-) -> tuple[dict, dict]:
-    """Build local and remote file manifests including all project files."""
+def _collect_local_files(project_paths: list[Path]) -> list[str]:
+    """Collect all syncable local file paths (global + per-project)."""
     local_files = get_global_include_paths()
     for proj in project_paths:
         for item in PROJECT_SYNC_ITEMS:
             p = proj / item
             if p.exists():
                 local_files.append(str(p))
-    local_manifest = build_local_manifest(local_files)
-    remote_manifest = engine.get_remote_file_hashes(list(local_manifest.keys()))
+    return local_files
+
+
+def _build_manifests(
+    engine: Engine,
+    project_paths: list[Path],
+) -> tuple[dict, dict]:
+    """Build local and remote file manifests including all project files."""
+    local_manifest = build_local_manifest(_collect_local_files(project_paths))
+
+    # Translate local paths to remote paths before querying remote hashes
+    remote_paths = [_local_to_remote_path(p, project_paths, engine.remote) for p in local_manifest]
+    raw_remote = engine.get_remote_file_hashes(remote_paths)
+
+    # Re-key the remote result back to local path keys
+    remote_manifest: dict = {}
+    for local_path in local_manifest:
+        remote_path = _local_to_remote_path(local_path, project_paths, engine.remote)
+        if remote_path in raw_remote:
+            remote_manifest[local_path] = raw_remote[remote_path]
+
     return local_manifest, remote_manifest
+
+
+def _local_to_remote_path(local_path: str, project_paths: list[Path], remote: Remote) -> str:
+    """Translate a local absolute path to its remote equivalent."""
+    lp = Path(local_path)
+    for proj in project_paths:
+        try:
+            rel = lp.relative_to(proj)
+            return f"{remote.remote_home}/{proj.name}/{rel.as_posix()}"
+        except ValueError:
+            continue
+    try:
+        rel = lp.relative_to(Path.home())
+        return f"{remote.remote_home}/{rel.as_posix()}"
+    except ValueError:
+        return local_path
 
 
 def _print_conflict_report(report: ConflictReport) -> None:

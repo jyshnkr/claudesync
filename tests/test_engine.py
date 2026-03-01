@@ -194,7 +194,7 @@ def test_rsync_project_aggregates_all_failures(engine, tmp_path):
 
     assert combined.returncode != 0
     # Combined stderr should contain errors from all 3 items
-    assert combined.stderr.count("error") >= 2
+    assert combined.stderr.count("error") == 3
 
 
 def test_check_connection_handles_timeout(engine):
@@ -203,3 +203,11 @@ def test_check_connection_handles_timeout(engine):
     with patch("claudesync.engine.subprocess.run",
                side_effect=subprocess.TimeoutExpired(cmd="ssh", timeout=10)):
         assert engine.check_connection() is False
+
+
+def test_get_remote_file_hashes_raises_on_missing_ssh(engine):
+    """FileNotFoundError (missing ssh binary) is wrapped as SyncError."""
+    with patch("claudesync.engine.subprocess.run",
+               side_effect=FileNotFoundError("No such file: ssh")):
+        with pytest.raises(SyncError, match="SSH executable not found"):
+            engine.get_remote_file_hashes(["/some/file"])

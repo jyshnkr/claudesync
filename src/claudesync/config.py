@@ -100,8 +100,14 @@ def load_config() -> Config:
             f"Config sync.backup_count must be an integer, got: "
             f"{sync_data.get('backup_count')!r}"
         ) from e
+    strategy = sync_data.get("strategy", "last-write-wins")
+    _valid_strategies = {"last-write-wins"}
+    if strategy not in _valid_strategies:
+        raise ValueError(
+            f"Config sync.strategy must be one of {_valid_strategies}, got: {strategy!r}"
+        )
     sync = SyncSettings(
-        strategy=sync_data.get("strategy", "last-write-wins"),
+        strategy=strategy,
         backup_count=backup_count,
     )
 
@@ -134,10 +140,13 @@ def save_config(config: Config) -> None:
         "backup_count": config.sync.backup_count,
     }
 
+    original_mode = CONFIG_FILE.stat().st_mode if CONFIG_FILE.exists() else None
     tmp = CONFIG_FILE.with_suffix(".tmp")
     try:
         with tmp.open("wb") as f:
             tomli_w.dump(data, f)
+        if original_mode is not None:
+            tmp.chmod(original_mode)
         tmp.replace(CONFIG_FILE)
     except Exception:
         tmp.unlink(missing_ok=True)

@@ -31,6 +31,9 @@ def sanitize_claude_json(source: Path = CLAUDE_JSON) -> dict[str, Any]:
     except json.JSONDecodeError as e:
         raise ValueError(f"Cannot read {source}: invalid JSON ({e}). Fix or delete the file.") from e
 
+    if not isinstance(data, dict):
+        raise ValueError(f"Cannot read {source}: expected a JSON object, got {type(data).__name__}.")
+
     return {k: v for k, v in data.items() if k not in SENSITIVE_FIELDS}
 
 
@@ -65,6 +68,10 @@ def merge_pulled_claude_json(pulled_path: Path, local_path: Path = CLAUDE_JSON) 
             f"Pulled {pulled_path} contains invalid JSON ({e}). "
             "The remote file may be corrupted."
         ) from e
+    if not isinstance(remote_data, dict):
+        raise ValueError(
+            f"Pulled {pulled_path} must be a JSON object, got {type(remote_data).__name__}."
+        )
 
     local_data: dict[str, Any] = {}
     if local_path.exists():
@@ -76,6 +83,10 @@ def merge_pulled_claude_json(pulled_path: Path, local_path: Path = CLAUDE_JSON) 
                 f"Local {local_path} contains invalid JSON ({e}). "
                 "Fix or delete the file before syncing."
             ) from e
+        if not isinstance(local_data, dict):
+            raise ValueError(
+                f"Local {local_path} must be a JSON object, got {type(local_data).__name__}."
+            )
 
     # Parse both files successfully before writing — then use atomic replace
     merged = {**remote_data}
@@ -83,10 +94,13 @@ def merge_pulled_claude_json(pulled_path: Path, local_path: Path = CLAUDE_JSON) 
         if field in local_data:
             merged[field] = local_data[field]
 
+    original_mode = local_path.stat().st_mode if local_path.exists() else None
     tmp = local_path.with_suffix(".tmp")
     try:
         with tmp.open("w") as f:
             json.dump(merged, f, indent=2)
+        if original_mode is not None:
+            tmp.chmod(original_mode)
         tmp.replace(local_path)
     except Exception:
         tmp.unlink(missing_ok=True)

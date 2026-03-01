@@ -14,10 +14,13 @@ class FileEntry(TypedDict):
     mtime: float
 
 
-class SyncedFileEntry(TypedDict):
-    """Manifest entry after a sync: adds the sync timestamp."""
+class _SyncedFileRequired(TypedDict):
     hash: str
     mtime: float
+
+
+class SyncedFileEntry(_SyncedFileRequired, total=False):
+    """Manifest entry after a sync: adds the optional sync timestamp."""
     last_synced: str
 
 
@@ -43,21 +46,30 @@ def load_manifest() -> dict[str, Any]:
         return {}
     try:
         with MANIFEST_FILE.open() as f:
-            return json.load(f)
+            data = json.load(f)
     except json.JSONDecodeError as e:
         raise ValueError(
             f"Manifest file {MANIFEST_FILE} is corrupted ({e}). "
             "Delete or repair it to continue."
         ) from e
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Manifest file {MANIFEST_FILE} is corrupted (expected object, got {type(data).__name__}). "
+            "Delete or repair it to continue."
+        )
+    return data
 
 
 def save_manifest(manifest: dict[str, Any]) -> None:
     """Save manifest to ~/.claudesync/manifest.json."""
     MANIFEST_FILE.parent.mkdir(parents=True, exist_ok=True)
+    original_mode = MANIFEST_FILE.stat().st_mode if MANIFEST_FILE.exists() else None
     tmp = MANIFEST_FILE.with_suffix(".tmp")
     try:
         with tmp.open("w") as f:
             json.dump(manifest, f, indent=2)
+        if original_mode is not None:
+            tmp.chmod(original_mode)
         tmp.replace(MANIFEST_FILE)
     except Exception:
         tmp.unlink(missing_ok=True)

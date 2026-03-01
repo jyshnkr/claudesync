@@ -27,7 +27,7 @@ class FileConflict:
     state: FileState
     local_mtime: float | None
     remote_mtime: float | None
-    winner: WinnerSide | None  # "local" or "remote" — None if no conflict
+    winner: WinnerSide | None
     backup_path: str | None = None
 
 

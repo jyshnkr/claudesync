@@ -152,3 +152,50 @@ def test_merge_raises_on_corrupted_local_json(tmp_path):
 
     with pytest.raises(ValueError, match="invalid JSON"):
         merge_pulled_claude_json(pulled, local)
+
+
+def test_merge_preserves_file_permissions(tmp_path):
+    """merge_pulled_claude_json must preserve original file permissions."""
+    local = tmp_path / "local.json"
+    local.write_text(json.dumps({"showSpinnerTree": False}))
+    local.chmod(0o600)
+
+    pulled = tmp_path / "pulled.json"
+    pulled.write_text(json.dumps({"showSpinnerTree": True}))
+
+    merge_pulled_claude_json(pulled, local)
+
+    import stat
+    mode = local.stat().st_mode & 0o777
+    assert mode == 0o600
+
+
+def test_sanitize_rejects_non_dict_json(tmp_path):
+    """sanitize_claude_json must reject JSON that is not an object."""
+    source = tmp_path / ".claude.json"
+    source.write_text(json.dumps([1, 2, 3]))
+
+    with pytest.raises(ValueError, match="expected a JSON object"):
+        sanitize_claude_json(source)
+
+
+def test_merge_rejects_non_dict_remote(tmp_path):
+    """merge_pulled_claude_json must reject a pulled file that is not a JSON object."""
+    local = tmp_path / "local.json"
+    local.write_text(json.dumps({"key": "val"}))
+    pulled = tmp_path / "pulled.json"
+    pulled.write_text(json.dumps([1, 2, 3]))
+
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        merge_pulled_claude_json(pulled, local)
+
+
+def test_merge_rejects_non_dict_local(tmp_path):
+    """merge_pulled_claude_json must reject a local file that is not a JSON object."""
+    local = tmp_path / "local.json"
+    local.write_text(json.dumps([1, 2, 3]))
+    pulled = tmp_path / "pulled.json"
+    pulled.write_text(json.dumps({"key": "val"}))
+
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        merge_pulled_claude_json(pulled, local)

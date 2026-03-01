@@ -1,7 +1,9 @@
 """Backup management for conflict resolution."""
 from __future__ import annotations
 
+import os
 import shutil
+import stat
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -64,8 +66,16 @@ def restore_backup(backup_id: str, original_path: str | None = None) -> list[Pat
     Otherwise restore all files in the backup.
     Returns list of restored paths.
     """
+    # Validate backup_id is a single safe path segment
+    parts = Path(backup_id).parts
+    if len(parts) != 1 or parts[0] in (".", "..") or os.sep in backup_id:
+        raise ValueError(f"Invalid backup_id: '{backup_id}'")
+
     ts_dir = BACKUP_DIR / backup_id
-    if not ts_dir.exists():
+    # Guard: backup_id must resolve inside BACKUP_DIR
+    if not ts_dir.resolve().is_relative_to(BACKUP_DIR.resolve()):
+        raise ValueError(f"Invalid backup id outside backup directory: '{backup_id}'")
+    if not ts_dir.is_dir():
         raise ValueError(f"Backup '{backup_id}' not found in {BACKUP_DIR}")
 
     restored: list[Path] = []
@@ -83,18 +93,70 @@ def restore_backup(backup_id: str, original_path: str | None = None) -> list[Pat
         if not dest.resolve().is_relative_to(Path.home().resolve()):
             raise ValueError(f"Restore destination outside home directory: '{original_path}'")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(backup_file_path, dest)
+        _atomic_copy(backup_file_path, dest)
         restored.append(dest)
     else:
+        backup_root = ts_dir.resolve()  # already validated above
+        home_root = Path.home().resolve()
         for src in ts_dir.rglob("*"):
-            if src.is_file():
-                rel = str(src.relative_to(ts_dir))
-                dest = Path("/" + rel)
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dest)
-                restored.append(dest)
+            if not src.is_file():
+                continue
+            if not src.resolve().is_relative_to(backup_root):
+                raise ValueError(f"Path traversal detected in backup archive: '{src}'")
+            rel = str(src.relative_to(ts_dir))
+            dest = Path("/" + rel)
+            if not dest.resolve().is_relative_to(home_root):
+                raise ValueError(f"Restore destination outside home directory: '{dest}'")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_copy(src, dest)
+            restored.append(dest)
 
     return restored
+
+
+def _atomic_copy(src: Path, dest: Path) -> None:
+    """Copy src to dest atomically via a temp file in the same directory.
+
+    Opens dest.parent with O_NOFOLLOW|O_DIRECTORY, verifies its inode hasn't
+    changed since the lstat, then creates the temp file with os.openat against
+    the held dirfd. This closes the TOCTOU window between the symlink check
+    and the write.
+    """
+    try:
+        parent_lstat = os.lstat(dest.parent)
+    except FileNotFoundError as e:
+        raise ValueError(f"Restore destination parent does not exist: '{dest.parent}'") from e
+    if stat.S_ISLNK(parent_lstat.st_mode):
+        raise ValueError(f"Restore destination parent is a symlink: '{dest.parent}'")
+    if dest.is_symlink():
+        raise ValueError(f"Restore destination is a symlink: '{dest}'")
+
+    dirfd = os.open(
+        str(dest.parent),
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+    )
+    tmp: Path | None = None
+    try:
+        dir_fstat = os.fstat(dirfd)
+        if (dir_fstat.st_ino, dir_fstat.st_dev) != (parent_lstat.st_ino, parent_lstat.st_dev):
+            raise ValueError(f"Restore destination parent was replaced: '{dest.parent}'")
+        tmp_name = f".claudesync_tmp_{os.urandom(8).hex()}"
+        tmp = dest.parent / tmp_name
+        if hasattr(os, "openat"):
+            raw_fd = os.openat(dirfd, tmp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        else:
+            # openat unavailable (some platforms/builds): fall back to full path.
+            # The dirfd inode check above already ensures dest.parent is authentic.
+            raw_fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(raw_fd)
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dest)
+    except BaseException:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
+        raise
+    finally:
+        os.close(dirfd)
 
 
 def _rotate_backups(keep_count: int) -> None:

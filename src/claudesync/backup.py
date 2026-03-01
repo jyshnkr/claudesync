@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -91,11 +92,8 @@ def restore_backup(backup_id: str, original_path: str | None = None) -> list[Pat
         # Guard restore destination to home directory
         if not dest.resolve().is_relative_to(Path.home().resolve()):
             raise ValueError(f"Restore destination outside home directory: '{original_path}'")
-        # Re-validate right before writing (mitigate symlink race)
-        if dest.is_symlink():
-            raise ValueError(f"Restore destination is a symlink: '{dest}'")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(backup_file_path, dest)
+        _atomic_copy(backup_file_path, dest)
         restored.append(dest)
     else:
         backup_root = ts_dir.resolve()  # already validated above
@@ -109,14 +107,28 @@ def restore_backup(backup_id: str, original_path: str | None = None) -> list[Pat
             dest = Path("/" + rel)
             if not dest.resolve().is_relative_to(home_root):
                 raise ValueError(f"Restore destination outside home directory: '{dest}'")
-            # Re-validate right before writing (mitigate symlink race)
-            if dest.is_symlink():
-                raise ValueError(f"Restore destination is a symlink: '{dest}'")
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dest)
+            _atomic_copy(src, dest)
             restored.append(dest)
 
     return restored
+
+
+def _atomic_copy(src: Path, dest: Path) -> None:
+    """Copy src to dest atomically via a temp file to prevent symlink races."""
+    if dest.is_symlink():
+        raise ValueError(f"Restore destination is a symlink: '{dest}'")
+    if dest.parent.is_symlink():
+        raise ValueError(f"Restore destination parent is a symlink: '{dest.parent}'")
+    fd = tempfile.NamedTemporaryFile(dir=dest.parent, delete=False)
+    tmp = Path(fd.name)
+    fd.close()
+    try:
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dest)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _rotate_backups(keep_count: int) -> None:

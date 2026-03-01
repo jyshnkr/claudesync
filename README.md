@@ -70,7 +70,7 @@ Options for `remote add`:
 
 ## Architecture
 
-```
+```text
 src/claudesync/
 ├── cli.py        — Typer CLI commands; orchestrates push/pull/diff/status
 ├── engine.py     — Rsync engine: builds commands, runs transfers, counts files
@@ -130,7 +130,7 @@ pip install -e ".[dev]"
 
 Project structure:
 
-```
+```text
 .
 ├── src/claudesync/   — Source package
 ├── tests/            — Pytest test suite (97 tests)

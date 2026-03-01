@@ -11,7 +11,7 @@
 
 Please report security vulnerabilities by opening a **private** GitHub Security Advisory at:
 
-`https://github.com/<owner>/claudesync/security/advisories/new`
+`https://github.com/jyshnkr/claudesync/security/advisories/new`
 
 Include as much detail as possible:
 - A description of the vulnerability and its potential impact

@@ -227,13 +227,7 @@ def pull(
             tmp_claude_json.unlink(missing_ok=True)
 
     if not summary.errors:
-        local_files = get_global_include_paths()
-        for proj in project_paths:
-            for item in PROJECT_SYNC_ITEMS:
-                p = proj / item
-                if p.exists():
-                    local_files.append(str(p))
-        update_manifest_for_remote(remote_name, build_local_manifest(local_files))
+        update_manifest_for_remote(remote_name, build_local_manifest(_collect_local_files(project_paths)))
 
     _print_summary(summary, "pull")
 
@@ -353,18 +347,23 @@ def _require_connection(engine: Engine, remote: Remote) -> None:
             raise typer.Exit(1)
 
 
-def _build_manifests(
-    engine: Engine,
-    project_paths: list[Path],
-) -> tuple[dict, dict]:
-    """Build local and remote file manifests including all project files."""
+def _collect_local_files(project_paths: list[Path]) -> list[str]:
+    """Collect all syncable local file paths (global + per-project)."""
     local_files = get_global_include_paths()
     for proj in project_paths:
         for item in PROJECT_SYNC_ITEMS:
             p = proj / item
             if p.exists():
                 local_files.append(str(p))
-    local_manifest = build_local_manifest(local_files)
+    return local_files
+
+
+def _build_manifests(
+    engine: Engine,
+    project_paths: list[Path],
+) -> tuple[dict, dict]:
+    """Build local and remote file manifests including all project files."""
+    local_manifest = build_local_manifest(_collect_local_files(project_paths))
 
     # Translate local paths to remote paths before querying remote hashes
     remote_paths = [_local_to_remote_path(p, project_paths, engine.remote) for p in local_manifest]

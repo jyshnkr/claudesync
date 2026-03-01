@@ -203,3 +203,33 @@ def test_sanitize_preserves_safe_nested_structure(tmp_path):
     assert result["mcpServers"]["safe-server"]["args"] == ["-m", "myserver"]
     assert result["projects"]["/my/proj"]["enabled"] is False
     assert result["projects"]["/my/proj"]["name"] == "My Project"
+
+
+# ---------------------------------------------------------------------------
+# uninstall_plist resilience tests
+# ---------------------------------------------------------------------------
+
+def test_uninstall_plist_handles_missing_launchctl(tmp_path, monkeypatch):
+    """uninstall_plist must still unlink the plist and return True if launchctl is absent."""
+    import subprocess
+    from claudesync.autostart import plist_install_path
+
+    # Monkeypatch plist_install_path to point into tmp_path
+    fake_plist = tmp_path / "com.claudesync.autosync.studio.plist"
+    fake_plist.write_text("<plist/>")
+    monkeypatch.setattr(
+        "claudesync.autostart.plist_install_path",
+        lambda remote_name: fake_plist,
+    )
+
+    # Make subprocess.run raise FileNotFoundError (launchctl not found)
+    def raise_fnf(*args, **kwargs):
+        raise FileNotFoundError("launchctl not found")
+
+    monkeypatch.setattr(subprocess, "run", raise_fnf)
+
+    from claudesync.autostart import uninstall_plist
+    result = uninstall_plist("studio")
+
+    assert result is True
+    assert not fake_plist.exists(), "plist file must be removed even when launchctl is absent"

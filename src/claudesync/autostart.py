@@ -99,6 +99,9 @@ def uninstall_plist(remote_name: str) -> bool:
     if not plist_path.exists():
         return False
 
-    subprocess.run(["launchctl", "unload", str(plist_path)], check=False)
+    try:
+        subprocess.run(["launchctl", "unload", str(plist_path)], check=False)
+    except FileNotFoundError:
+        pass  # launchctl not available — just remove the plist file
     plist_path.unlink()
     return True

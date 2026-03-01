@@ -34,6 +34,9 @@ _KNOWN_SENSITIVE = {
     "hasCompletedOnboarding",
 }
 
+# Fields whose values may themselves contain sensitive nested keys.
+_NESTED_STRIP_FIELDS = {"projects", "mcpServers", "customApiKeyConfig"}
+
 # Sensitive keys that must be stripped when found nested inside SAFE_FIELDS values
 # (e.g. env tokens in mcpServers, API keys in projects).
 _NESTED_SENSITIVE_KEYS = {
@@ -78,9 +81,6 @@ def sanitize_claude_json(source: Path = CLAUDE_JSON) -> dict[str, Any]:
 
     if not isinstance(data, dict):
         raise ValueError(f"Cannot read {source}: expected a JSON object, got {type(data).__name__}.")
-
-    # Fields whose values may themselves contain sensitive nested keys
-    _NESTED_STRIP_FIELDS = {"projects", "mcpServers", "customApiKeyConfig"}
 
     result = {}
     for k, v in data.items():
@@ -148,7 +148,10 @@ def merge_pulled_claude_json(pulled_path: Path, local_path: Path = CLAUDE_JSON) 
     merged = {**local_data}
     for field in SAFE_FIELDS:
         if field in remote_data:
-            merged[field] = remote_data[field]
+            if field in _NESTED_STRIP_FIELDS:
+                merged[field] = _strip_sensitive_nested(remote_data[field])
+            else:
+                merged[field] = remote_data[field]
 
     original_mode = local_path.stat().st_mode if local_path.exists() else None
     tmp = local_path.with_suffix(".tmp")

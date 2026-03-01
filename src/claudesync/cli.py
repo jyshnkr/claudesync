@@ -160,9 +160,9 @@ def pair(
         console.print(f"\n[bold green]✓ Paired with {name}![/bold green]")
         console.print(f"\nOn [bold]{name}[/bold], run:")
         console.print(f"  [cyan]claudesync remote add here {_get_local_address()} --remote-home {Path.home()}[/cyan]")
-        console.print(f"  [cyan]claudesync pull here[/cyan]")
+        console.print("  [cyan]claudesync pull here[/cyan]")
     else:
-        console.print(f"\n[yellow]⚠ Pairing incomplete — push encountered errors. Fix the issues above and retry.[/yellow]")
+        console.print("\n[yellow]⚠ Pairing incomplete — push encountered errors. Fix the issues above and retry.[/yellow]")
 
 
 def _get_local_address() -> str:
@@ -585,7 +585,7 @@ def autostart_enable(
         console.print(f"  Logs:     ~/.claudesync/logs/autosync-{remote_name}.log")
     except subprocess.CalledProcessError as e:
         console.print(f"[red]Failed to load plist: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @autostart_app.command("disable")
@@ -605,4 +605,4 @@ def autostart_disable(
             console.print(f"[dim]No auto-sync job found for '{remote_name}'[/dim]")
     except subprocess.CalledProcessError as e:
         console.print(f"[red]Failed to unload plist: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e

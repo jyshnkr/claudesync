@@ -237,6 +237,43 @@ def test_conflict_report_shows_human_readable_winner(capsys):
     assert "days ago" in captured.out or "hours ago" in captured.out
 
 
+@pytest.fixture
+def mock_engine_class():
+    with patch("claudesync.cli.Engine") as mock:
+        yield mock
+
+
+def test_pair_command_adds_remote_tests_connection_and_pushes(mock_config, mock_engine_class, tmp_path):
+    """pair must add remote, verify SSH, and run initial push."""
+    sanitized = tmp_path / "sanitized.json"
+    sanitized.write_text("{}")
+
+    mock_engine_class.return_value.check_connection.return_value = True
+    mock_engine_class.return_value._ssh_cmd.return_value = ["ssh", "alice@192.168.1.10"]
+    mock_engine_class.return_value.get_remote_file_hashes.return_value = {}
+    mock_engine_class.return_value.push.return_value = SyncSummary(files_transferred=3)
+
+    with patch("claudesync.cli.load_config", return_value=mock_config), \
+         patch("claudesync.cli.save_config"), \
+         patch("claudesync.cli.get_remote_manifest", return_value={}), \
+         patch("claudesync.cli.build_local_manifest", return_value={}), \
+         patch("claudesync.cli.get_global_include_paths", return_value=[]), \
+         patch("claudesync.cli.update_manifest_for_remote"), \
+         patch("claudesync.cli.write_sanitized_temp", return_value=sanitized), \
+         patch("claudesync.cli.subprocess") as mock_sub:
+        mock_sub.run.return_value = MagicMock(returncode=0, stdout="/home/alice\n")
+        result = runner.invoke(app, [
+            "pair",
+            "--name", "studio",
+            "--address", "alice@192.168.1.10",
+            "--key", "~/.ssh/id_ed25519",
+        ])
+
+    assert result.exit_code == 0
+    assert "studio" in result.output
+    assert "paired" in result.output.lower() or "push" in result.output.lower()
+
+
 def test_pull_rebuilds_manifest_after_sync(mock_config, connected_engine, tmp_path):
     """After a successful pull, manifest should be rebuilt from post-sync local state."""
     with patch("claudesync.cli.load_config", return_value=mock_config), \

@@ -1,6 +1,7 @@
 """ClaudeSync CLI — bi-directional Claude Code context sync over SSH."""
 from __future__ import annotations
 
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -71,6 +72,98 @@ def init() -> None:
     console.print("\nNext steps:")
     console.print(f"  claudesync project add ~/Projects/MyProject")
     console.print(f"  claudesync push {remote_name}")
+
+
+# ---------------------------------------------------------------------------
+# pair
+# ---------------------------------------------------------------------------
+
+@app.command()
+def pair(
+    name: str = typer.Option(..., "--name", "-n", help="Name for this remote (e.g. 'studio')"),
+    address: str = typer.Option(..., "--address", "-a", help="user@host of the remote machine"),
+    key: str = typer.Option("~/.ssh/id_ed25519", "--key", "-k", help="SSH private key path"),
+    no_push: bool = typer.Option(False, "--no-push", help="Skip initial push (just configure)"),
+) -> None:
+    """Pair with another machine — add remote, verify SSH, and do initial push."""
+    if "@" not in address:
+        console.print("[red]Error: address must be in user@host format[/red]")
+        raise typer.Exit(1)
+
+    user, host = address.split("@", 1)
+
+    console.print(f"[bold cyan]Pairing with [white]{name}[/white] ({address})[/bold cyan]\n")
+
+    # Step 1: test connection and detect remote home
+    console.print("[dim]Testing SSH connection...[/dim]")
+    tmp_remote = Remote(host=host, user=user, ssh_key=key, remote_home=f"/home/{user}")
+    engine = Engine(tmp_remote)
+
+    if not engine.check_connection():
+        console.print(f"[red]✗ Cannot connect to {address}.[/red]")
+        console.print("[dim]Check: is the host reachable? Is the SSH key correct?[/dim]")
+        raise typer.Exit(1)
+
+    console.print("[green]✓ SSH connection OK[/green]")
+
+    # Auto-detect remote home via `echo $HOME`
+    res = subprocess.run(
+        engine._ssh_cmd() + ["echo $HOME"],
+        capture_output=True, text=True, timeout=10,
+    )
+    remote_home = res.stdout.strip() if res.returncode == 0 and res.stdout.strip() else f"/home/{user}"
+    console.print(f"[dim]Remote home: {remote_home}[/dim]")
+
+    # Step 2: save config
+    config = load_config()
+    remote = Remote(host=host, user=user, ssh_key=key, remote_home=remote_home)
+    config.remotes[name] = remote
+    save_config(config)
+    console.print(f"[green]✓ Remote '{name}' saved to config[/green]")
+
+    if no_push:
+        console.print(f"\n[bold]Pairing complete (no push).[/bold]")
+        console.print(f"Run [cyan]claudesync push {name}[/cyan] when ready.")
+        return
+
+    # Step 3: initial push
+    console.print(f"\n[dim]Running initial push to {name}...[/dim]")
+    engine = Engine(remote)
+    project_paths = config.project_paths()
+
+    with console.status("Building manifests..."):
+        local_manifest, remote_manifest = _build_manifests(engine, project_paths, include_history=config.sync.include_history)
+
+    with console.status("Detecting conflicts..."):
+        last_sync = get_remote_manifest(name)
+        report = detect_conflicts(name, local_manifest, remote_manifest, last_sync)
+        report = apply_conflict_resolutions(report, config.sync.backup_count)
+
+    _print_conflict_report(report)
+
+    with console.status("Pushing files..."):
+        sanitized_tmp = write_sanitized_temp()
+        try:
+            summary = engine.push(project_paths, sanitized_claude_json=sanitized_tmp, include_history=config.sync.include_history)
+        finally:
+            sanitized_tmp.unlink(missing_ok=True)
+
+    if not summary.errors:
+        update_manifest_for_remote(name, local_manifest)
+
+    _print_summary(summary, "push")
+
+    console.print(f"\n[bold green]✓ Paired with {name}![/bold green]")
+    console.print(f"\nOn [bold]{name}[/bold], run:")
+    console.print(f"  [cyan]claudesync remote add here {_get_local_address()} --remote-home {Path.home()}[/cyan]")
+    console.print(f"  [cyan]claudesync pull here[/cyan]")
+
+
+def _get_local_address() -> str:
+    """Best-effort: return current machine's user@hostname."""
+    import socket
+    hostname = socket.gethostname()
+    return f"{Path.home().name}@{hostname}"
 
 
 # ---------------------------------------------------------------------------

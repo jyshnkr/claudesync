@@ -235,7 +235,7 @@ def test_ensure_remote_agent_not_redeployed_if_current(engine, mock_run):
         MagicMock(returncode=0, stdout="1\n", stderr=""),  # version check OK
         MagicMock(returncode=0, stdout="{}", stderr=""),    # hash fetch
     ]
-    result = engine.get_remote_file_hashes([])
+    engine.get_remote_file_hashes([])
     # Only 2 calls would happen if not empty; but empty list returns early
     # Test with a non-empty list:
     mock_run.reset_mock()
@@ -243,7 +243,7 @@ def test_ensure_remote_agent_not_redeployed_if_current(engine, mock_run):
         MagicMock(returncode=0, stdout="1\n", stderr=""),  # version check OK
         MagicMock(returncode=0, stdout="{}", stderr=""),    # hash fetch
     ]
-    result = engine.get_remote_file_hashes(["/some/file"])
+    engine.get_remote_file_hashes(["/some/file"])
     assert mock_run.call_count == 2
 
 

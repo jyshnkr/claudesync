@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 import subprocess
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
 
 PLIST_LABEL_PREFIX = "com.claudesync"
 
@@ -41,9 +42,11 @@ def generate_plist(
     if log_dir is None:
         log_dir = Path.home() / ".claudesync" / "logs"
 
-    label = f"{PLIST_LABEL_PREFIX}.{remote_name}"
-    stdout_log = str(log_dir / f"autosync-{remote_name}.log")
-    stderr_log = str(log_dir / f"autosync-{remote_name}-err.log")
+    label = xml_escape(f"{PLIST_LABEL_PREFIX}.{remote_name}")
+    claudesync_path = xml_escape(claudesync_path)
+    remote_name_escaped = xml_escape(remote_name)
+    stdout_log = xml_escape(str(log_dir / f"autosync-{remote_name}.log"))
+    stderr_log = xml_escape(str(log_dir / f"autosync-{remote_name}-err.log"))
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -57,7 +60,7 @@ def generate_plist(
     <array>
         <string>{claudesync_path}</string>
         <string>pull</string>
-        <string>{remote_name}</string>
+        <string>{remote_name_escaped}</string>
     </array>
 
     <key>StartInterval</key>

@@ -242,3 +242,21 @@ def test_sanitizer_strips_known_sensitive_fields(tmp_path):
     assert "primaryApiKey" not in result
     assert "userID" not in result
     assert "theme" in result
+
+
+def test_sanitize_strips_sensitive_inside_list(tmp_path):
+    """_strip_sensitive_nested must recurse into lists, not skip dicts inside them."""
+    source = tmp_path / ".claude.json"
+    source.write_text(json.dumps({
+        "mcpServers": {
+            "s": {
+                "commands": [
+                    {"env": {"SECRET": "x"}, "name": "cmd"}
+                ]
+            }
+        }
+    }))
+    result = sanitize_claude_json(source)
+    cmd = result["mcpServers"]["s"]["commands"][0]
+    assert "env" not in cmd, "env inside a list element must be stripped"
+    assert cmd["name"] == "cmd"

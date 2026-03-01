@@ -50,15 +50,17 @@ _NESTED_SENSITIVE_KEYS = {
 def _strip_sensitive_nested(obj: Any) -> Any:
     """Recursively remove _NESTED_SENSITIVE_KEYS from dict values.
 
-    Non-dict values (strings, lists, etc.) are returned unchanged.
+    Recurses into both dicts and lists; other values are returned unchanged.
     """
-    if not isinstance(obj, dict):
-        return obj
-    return {
-        k: _strip_sensitive_nested(v)
-        for k, v in obj.items()
-        if k not in _NESTED_SENSITIVE_KEYS
-    }
+    if isinstance(obj, dict):
+        return {
+            k: _strip_sensitive_nested(v)
+            for k, v in obj.items()
+            if k not in _NESTED_SENSITIVE_KEYS
+        }
+    if isinstance(obj, list):
+        return [_strip_sensitive_nested(item) for item in obj]
+    return obj
 
 
 def sanitize_claude_json(source: Path = CLAUDE_JSON) -> dict[str, Any]:

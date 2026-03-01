@@ -70,10 +70,10 @@ def init() -> None:
         console.print("[dim]Config saved anyway. Run 'claudesync remote add' to reconfigure.[/dim]")
 
     save_config(config)
-    console.print(f"\n[green]Config saved to ~/.claudesync/config.toml[/green]")
+    console.print("\n[green]Config saved to ~/.claudesync/config.toml[/green]")
     console.print(f"  Remote '{remote_name}' → {remote.address}")
     console.print("\nNext steps:")
-    console.print(f"  claudesync project add ~/Projects/MyProject")
+    console.print("  claudesync project add ~/Projects/MyProject")
     console.print(f"  claudesync push {remote_name}")
 
 
@@ -125,7 +125,7 @@ def pair(
     console.print(f"[green]✓ Remote '{name}' saved to config[/green]")
 
     if no_push:
-        console.print(f"\n[bold]Pairing complete (no push).[/bold]")
+        console.print("\n[bold]Pairing complete (no push).[/bold]")
         console.print(f"Run [cyan]claudesync push {name}[/cyan] when ready.")
         return
 
@@ -423,7 +423,7 @@ def backup_restore(
             console.print(f"[green]Restored:[/green] {path}")
     except (ValueError, FileNotFoundError) as e:
         console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +543,7 @@ def _print_summary(summary: SyncSummary, direction: str) -> None:
     console.print(f"  {arrow} {n} file(s) transferred")
 
     if errors:
-        console.print(f"\n[yellow]Warnings:[/yellow]")
+        console.print("\n[yellow]Warnings:[/yellow]")
         for err in errors:
             console.print(f"  {err.strip()}")
 
@@ -571,7 +571,7 @@ def autostart_enable(
         config.get_remote(remote_name)
     except ValueError as e:
         console.print(f"[red]{e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
     import shutil
     claudesync_path = shutil.which("claudesync") or "claudesync"

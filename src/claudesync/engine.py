@@ -174,7 +174,7 @@ class Engine:
                 f"Timed out deploying remote agent to {self.remote.address}: {e}"
             ) from e
         except FileNotFoundError as e:
-            raise SyncError(f"SSH executable not found: {e}") from e
+            raise SyncError(f"rsync executable not found: {e}") from e
         if res.returncode != 0:
             raise SyncError(
                 f"Failed to deploy remote agent to {self.remote.address}: {res.stderr.strip()}"

@@ -1,6 +1,7 @@
 """ClaudeSync CLI — bi-directional Claude Code context sync over SSH."""
 from __future__ import annotations
 
+import platform
 import subprocess
 import tempfile
 from pathlib import Path
@@ -155,10 +156,13 @@ def pair(
 
     _print_summary(summary, "push")
 
-    console.print(f"\n[bold green]✓ Paired with {name}![/bold green]")
-    console.print(f"\nOn [bold]{name}[/bold], run:")
-    console.print(f"  [cyan]claudesync remote add here {_get_local_address()} --remote-home {Path.home()}[/cyan]")
-    console.print(f"  [cyan]claudesync pull here[/cyan]")
+    if not summary.errors:
+        console.print(f"\n[bold green]✓ Paired with {name}![/bold green]")
+        console.print(f"\nOn [bold]{name}[/bold], run:")
+        console.print(f"  [cyan]claudesync remote add here {_get_local_address()} --remote-home {Path.home()}[/cyan]")
+        console.print(f"  [cyan]claudesync pull here[/cyan]")
+    else:
+        console.print(f"\n[yellow]⚠ Pairing incomplete — push encountered errors. Fix the issues above and retry.[/yellow]")
 
 
 def _get_local_address() -> str:
@@ -554,9 +558,12 @@ def autostart_enable(
     interval: int = typer.Option(300, "--interval", "-i", help="Sync interval in seconds (default 300 = 5 min)"),
 ) -> None:
     """Install a launchd job to auto-pull from a remote every N seconds."""
-    import platform
     if platform.system() != "Darwin":
         console.print("[red]autostart is macOS-only (uses launchd).[/red]")
+        raise typer.Exit(1)
+
+    if interval <= 0:
+        console.print(f"[red]Error: --interval must be a positive integer, got {interval}.[/red]")
         raise typer.Exit(1)
 
     config = load_config()
@@ -586,8 +593,16 @@ def autostart_disable(
     remote_name: str = typer.Argument(..., help="Remote name to stop auto-syncing"),
 ) -> None:
     """Remove the launchd auto-sync job for a remote."""
+    if platform.system() != "Darwin":
+        console.print("[red]autostart is macOS-only (uses launchd).[/red]")
+        raise typer.Exit(1)
+
     from .autostart import uninstall_plist
-    if uninstall_plist(remote_name):
-        console.print(f"[green]✓ Auto-sync disabled for '{remote_name}'[/green]")
-    else:
-        console.print(f"[dim]No auto-sync job found for '{remote_name}'[/dim]")
+    try:
+        if uninstall_plist(remote_name):
+            console.print(f"[green]✓ Auto-sync disabled for '{remote_name}'[/green]")
+        else:
+            console.print(f"[dim]No auto-sync job found for '{remote_name}'[/dim]")
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]Failed to unload plist: {e}[/red]")
+        raise typer.Exit(1)

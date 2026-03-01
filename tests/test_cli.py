@@ -274,6 +274,75 @@ def test_pair_command_adds_remote_tests_connection_and_pushes(mock_config, mock_
     assert "paired" in result.output.lower() or "push" in result.output.lower()
 
 
+def test_pair_does_not_celebrate_on_push_errors(mock_config, mock_engine_class, tmp_path):
+    """pair must NOT print 'Paired!' when the push returned errors."""
+    sanitized = tmp_path / "sanitized.json"
+    sanitized.write_text("{}")
+
+    mock_engine_class.return_value.check_connection.return_value = True
+    mock_engine_class.return_value._ssh_cmd.return_value = ["ssh", "alice@192.168.1.10"]
+    mock_engine_class.return_value.get_remote_file_hashes.return_value = {}
+    # Push returns errors
+    mock_engine_class.return_value.push.return_value = SyncSummary(
+        files_transferred=0, errors=["rsync: connection reset"]
+    )
+
+    with patch("claudesync.cli.load_config", return_value=mock_config), \
+         patch("claudesync.cli.save_config"), \
+         patch("claudesync.cli.get_remote_manifest", return_value={}), \
+         patch("claudesync.cli.build_local_manifest", return_value={}), \
+         patch("claudesync.cli.get_global_include_paths", return_value=[]), \
+         patch("claudesync.cli.update_manifest_for_remote"), \
+         patch("claudesync.cli.write_sanitized_temp", return_value=sanitized), \
+         patch("claudesync.cli.subprocess") as mock_sub:
+        mock_sub.run.return_value = MagicMock(returncode=0, stdout="/home/alice\n")
+        result = runner.invoke(app, [
+            "pair",
+            "--name", "studio",
+            "--address", "alice@192.168.1.10",
+        ])
+
+    # "Paired!" celebration must not appear when there were errors
+    assert "Paired" not in result.output or "warning" in result.output.lower() or \
+        "error" in result.output.lower() or "rsync" in result.output.lower(), (
+        "pair must not show celebration message when push had errors"
+    )
+    # The specific green celebration string must not appear
+    assert "✓ Paired" not in result.output
+
+
+def test_autostart_enable_rejects_zero_interval(mock_config):
+    """autostart enable must reject interval <= 0."""
+    with patch("claudesync.cli.load_config", return_value=mock_config), \
+         patch("claudesync.cli.platform") as mock_platform:
+        mock_platform.system.return_value = "Darwin"
+        result = runner.invoke(app, ["autostart", "enable", REMOTE_NAME, "--interval", "0"])
+
+    assert result.exit_code != 0
+    assert "interval" in result.output.lower() or result.exit_code == 1
+
+
+def test_autostart_enable_rejects_negative_interval(mock_config):
+    """autostart enable must reject interval < 0."""
+    with patch("claudesync.cli.load_config", return_value=mock_config), \
+         patch("claudesync.cli.platform") as mock_platform:
+        mock_platform.system.return_value = "Darwin"
+        result = runner.invoke(app, ["autostart", "enable", REMOTE_NAME, "--interval", "-5"])
+
+    assert result.exit_code != 0
+
+
+def test_autostart_disable_rejects_non_darwin():
+    """autostart disable must exit with error on non-macOS platforms."""
+    with patch("claudesync.cli.platform") as mock_platform:
+        mock_platform.system.return_value = "Linux"
+        result = runner.invoke(app, ["autostart", "disable", REMOTE_NAME])
+
+    assert result.exit_code != 0
+    assert "macos" in result.output.lower() or "darwin" in result.output.lower() or \
+        "launchd" in result.output.lower()
+
+
 def test_pull_manifest_rebuild_passes_include_history(mock_config, connected_engine, tmp_path):
     """Post-pull manifest rebuild must pass include_history from config to _collect_local_files.
 

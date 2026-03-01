@@ -80,3 +80,8 @@ def test_ssh_key_path_expands_tilde():
     r = Remote(host="h", user="u", ssh_key="~/.ssh/id_rsa")
     assert not str(r.ssh_key_path).startswith("~")
     assert "id_rsa" in str(r.ssh_key_path)
+
+
+def test_sync_settings_defaults_include_history_false():
+    s = SyncSettings()
+    assert s.include_history is False

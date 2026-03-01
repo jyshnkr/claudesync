@@ -13,7 +13,7 @@ from .backup import list_backups, restore_backup
 from .config import Config, Remote, SyncSettings, load_config, save_config
 from .conflicts import ConflictReport, FileState, apply_conflict_resolutions, detect_conflicts
 from .engine import Engine, SyncSummary
-from .filters import PROJECT_SYNC_ITEMS, get_global_include_paths
+from .filters import PROJECT_SYNC_ITEMS, get_global_include_paths, get_global_sync_includes
 from .manifest import (
     build_local_manifest,
     get_remote_manifest,
@@ -173,7 +173,7 @@ def push(
     _require_connection(engine, remote)
 
     with console.status("Building manifests..."):
-        local_manifest, remote_manifest = _build_manifests(engine, project_paths)
+        local_manifest, remote_manifest = _build_manifests(engine, project_paths, include_history=config.sync.include_history)
 
     with console.status("Detecting conflicts..."):
         last_sync = get_remote_manifest(remote_name)
@@ -185,7 +185,7 @@ def push(
     with console.status("Syncing files..."):
         sanitized_tmp = write_sanitized_temp()
         try:
-            summary = engine.push(project_paths, sanitized_claude_json=sanitized_tmp)
+            summary = engine.push(project_paths, sanitized_claude_json=sanitized_tmp, include_history=config.sync.include_history)
         finally:
             sanitized_tmp.unlink(missing_ok=True)
 
@@ -206,7 +206,7 @@ def pull(
     _require_connection(engine, remote)
 
     with console.status("Building manifests..."):
-        local_manifest, remote_manifest = _build_manifests(engine, project_paths)
+        local_manifest, remote_manifest = _build_manifests(engine, project_paths, include_history=config.sync.include_history)
 
     with console.status("Detecting conflicts..."):
         last_sync = get_remote_manifest(remote_name)
@@ -220,7 +220,7 @@ def pull(
             tmp_claude_json = Path(tf.name)
 
         try:
-            summary = engine.pull(project_paths, temp_claude_json_dest=tmp_claude_json)
+            summary = engine.pull(project_paths, temp_claude_json_dest=tmp_claude_json, include_history=config.sync.include_history)
             if tmp_claude_json.exists() and tmp_claude_json.stat().st_size > 0:
                 merge_pulled_claude_json(tmp_claude_json)
         finally:
@@ -347,9 +347,9 @@ def _require_connection(engine: Engine, remote: Remote) -> None:
             raise typer.Exit(1)
 
 
-def _collect_local_files(project_paths: list[Path]) -> list[str]:
+def _collect_local_files(project_paths: list[Path], include_history: bool = False) -> list[str]:
     """Collect all syncable local file paths (global + per-project)."""
-    local_files = get_global_include_paths()
+    local_files = get_global_include_paths(include_history=include_history)
     for proj in project_paths:
         for item in PROJECT_SYNC_ITEMS:
             p = proj / item
@@ -361,9 +361,10 @@ def _collect_local_files(project_paths: list[Path]) -> list[str]:
 def _build_manifests(
     engine: Engine,
     project_paths: list[Path],
+    include_history: bool = False,
 ) -> tuple[dict, dict]:
     """Build local and remote file manifests including all project files."""
-    local_manifest = build_local_manifest(_collect_local_files(project_paths))
+    local_manifest = build_local_manifest(_collect_local_files(project_paths, include_history=include_history))
 
     # Translate local paths to remote paths before querying remote hashes
     remote_paths = [_local_to_remote_path(p, project_paths, engine.remote) for p in local_manifest]

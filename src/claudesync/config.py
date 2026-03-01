@@ -45,6 +45,7 @@ class Remote:
 class SyncSettings:
     strategy: SyncStrategy = "last-write-wins"
     backup_count: int = 10
+    include_history: bool = False   # opt-in — see filters.py for why
 
     def __post_init__(self) -> None:
         if self.backup_count < 1:
@@ -109,6 +110,7 @@ def load_config() -> Config:
     sync = SyncSettings(
         strategy=strategy,
         backup_count=backup_count,
+        include_history=bool(sync_data.get("include_history", False)),
     )
 
     projects = raw.get("projects", {}).get("paths", [])
@@ -138,6 +140,7 @@ def save_config(config: Config) -> None:
     data["sync"] = {
         "strategy": config.sync.strategy,
         "backup_count": config.sync.backup_count,
+        "include_history": config.sync.include_history,
     }
 
     original_mode = CONFIG_FILE.stat().st_mode if CONFIG_FILE.exists() else None

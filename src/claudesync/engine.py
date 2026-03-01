@@ -48,25 +48,26 @@ class Engine:
         except FileNotFoundError:
             return False
 
-    def push(self, project_paths: list[Path], sanitized_claude_json: Path | None = None) -> SyncSummary:
+    def push(self, project_paths: list[Path], sanitized_claude_json: Path | None = None, include_history: bool = False) -> SyncSummary:
         """Push local context to remote. Returns SyncSummary."""
-        return self._sync("push", project_paths, claude_json_path=sanitized_claude_json)
+        return self._sync("push", project_paths, claude_json_path=sanitized_claude_json, include_history=include_history)
 
-    def pull(self, project_paths: list[Path], temp_claude_json_dest: Path | None = None) -> SyncSummary:
+    def pull(self, project_paths: list[Path], temp_claude_json_dest: Path | None = None, include_history: bool = False) -> SyncSummary:
         """Pull remote context to local. Returns SyncSummary."""
-        return self._sync("pull", project_paths, claude_json_path=temp_claude_json_dest)
+        return self._sync("pull", project_paths, claude_json_path=temp_claude_json_dest, include_history=include_history)
 
     def _sync(
         self,
         direction: SyncDirection,
         project_paths: list[Path],
         claude_json_path: Path | None = None,
+        include_history: bool = False,
     ) -> SyncSummary:
         """Internal: run rsync for global, per-project, and .claude.json."""
         summary = SyncSummary()
 
         # Step 1: global ~/.claude/
-        result = self._rsync_global(direction=direction, dry_run=False)
+        result = self._rsync_global(direction=direction, dry_run=False, include_history=include_history)
         summary.files_transferred += _count_transferred(result.stdout)
         if result.returncode != 0:
             summary.errors.append(result.stderr)
@@ -87,11 +88,11 @@ class Engine:
 
         return summary
 
-    def dry_run(self, project_paths: list[Path], direction: SyncDirection = "push") -> str:
+    def dry_run(self, project_paths: list[Path], direction: SyncDirection = "push", include_history: bool = False) -> str:
         """Run rsync --dry-run, return combined output for display."""
         lines: list[str] = []
 
-        result = self._rsync_global(direction=direction, dry_run=True)
+        result = self._rsync_global(direction=direction, dry_run=True, include_history=include_history)
         lines.append("=== Global ~/.claude/ ===")
         lines.append(result.stdout)
         if result.returncode != 0:
@@ -172,12 +173,12 @@ class Engine:
             cmd.append("--dry-run")
         return cmd
 
-    def _rsync_global(self, *, direction: SyncDirection, dry_run: bool) -> subprocess.CompletedProcess:
+    def _rsync_global(self, *, direction: SyncDirection, dry_run: bool, include_history: bool = False) -> subprocess.CompletedProcess:
         """Sync ~/.claude/ directory."""
         local = str(Path.home() / ".claude") + "/"
         remote = f"{self.remote.address}:{self.remote.remote_home}/.claude/"
 
-        filter_args = build_global_filter_args()
+        filter_args = build_global_filter_args(include_history=include_history)
         cmd = self._base_rsync(dry_run) + filter_args
 
         if direction == "push":

@@ -183,3 +183,17 @@ def test_conflict_report_no_conflicts():
     fc = FileConflict("/f", FileState.UNCHANGED, 1.0, 1.0, None)
     report = ConflictReport(conflicts=[fc])
     assert not report.has_conflicts
+
+
+def test_detect_conflicts_last_sync_none_uses_fallback():
+    """When last_sync=None, detect_conflicts falls back to get_remote_manifest."""
+    path = "/some/file"
+    local = _make_manifest(path, "hash-a", 1000.0)
+    remote = _make_manifest(path, "hash-a", 1000.0)
+
+    with patch("claudesync.manifest.get_remote_manifest", return_value={}) as mock_get:
+        report = detect_conflicts(REMOTE, local, remote, last_sync=None)
+
+    mock_get.assert_called_once_with(REMOTE)
+    # Same hash on both sides, empty last_sync → UNCHANGED
+    assert report.conflicts[0].state == FileState.UNCHANGED

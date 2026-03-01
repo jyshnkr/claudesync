@@ -17,7 +17,7 @@ REMOTE_NAME = "home"
 
 
 @pytest.fixture
-def mock_config(tmp_path):
+def mock_config():
     """A Config with one remote and no projects."""
     remote = Remote(host="192.168.1.1", user="alice", ssh_key="~/.ssh/id_ed25519",
                     remote_home="/home/alice")
@@ -40,23 +40,28 @@ def connected_engine():
 # push
 # ---------------------------------------------------------------------------
 
-def test_push_updates_manifest_after_successful_sync(mock_config, connected_engine):
+def test_push_updates_manifest_after_successful_sync(mock_config, connected_engine, tmp_path):
+    sanitized = tmp_path / "sanitized.json"
+    sanitized.write_text("{}")
+
     with patch("claudesync.cli.load_config", return_value=mock_config), \
          patch("claudesync.cli.Engine", return_value=connected_engine), \
          patch("claudesync.cli.get_global_include_paths", return_value=[]), \
          patch("claudesync.cli.build_local_manifest", return_value={}), \
          patch("claudesync.cli.get_remote_manifest", return_value={}), \
          patch("claudesync.cli.update_manifest_for_remote") as mock_update, \
-         patch("claudesync.cli.write_sanitized_temp", return_value=Path("/tmp/sanitized.json")), \
-         patch("pathlib.Path.unlink"):
+         patch("claudesync.cli.write_sanitized_temp", return_value=sanitized):
         result = runner.invoke(app, ["push", REMOTE_NAME])
 
     assert result.exit_code == 0
     mock_update.assert_called_once()
 
 
-def test_push_skips_manifest_update_on_errors(mock_config, connected_engine):
+def test_push_skips_manifest_update_on_errors(mock_config, connected_engine, tmp_path):
     connected_engine.push.return_value = SyncSummary(files_transferred=0, errors=["rsync failed"])
+
+    sanitized = tmp_path / "sanitized.json"
+    sanitized.write_text("{}")
 
     with patch("claudesync.cli.load_config", return_value=mock_config), \
          patch("claudesync.cli.Engine", return_value=connected_engine), \
@@ -64,8 +69,7 @@ def test_push_skips_manifest_update_on_errors(mock_config, connected_engine):
          patch("claudesync.cli.build_local_manifest", return_value={}), \
          patch("claudesync.cli.get_remote_manifest", return_value={}), \
          patch("claudesync.cli.update_manifest_for_remote") as mock_update, \
-         patch("claudesync.cli.write_sanitized_temp", return_value=Path("/tmp/sanitized.json")), \
-         patch("pathlib.Path.unlink"):
+         patch("claudesync.cli.write_sanitized_temp", return_value=sanitized):
         result = runner.invoke(app, ["push", REMOTE_NAME])
 
     assert result.exit_code == 0
@@ -84,6 +88,7 @@ def test_push_cleans_up_sanitized_temp_on_engine_exception(mock_config, connecte
          patch("claudesync.cli.write_sanitized_temp", return_value=tmp_file):
         result = runner.invoke(app, ["push", REMOTE_NAME])
 
+    assert result.exit_code != 0
     # Even on exception, unlink should have been called
     tmp_file.unlink.assert_called_once()
 
@@ -107,6 +112,7 @@ def test_pull_skips_merge_on_empty_remote_claude_json(mock_config, connected_eng
         mock_ntf.return_value.__enter__.return_value.name = str(empty_tmp)
         result = runner.invoke(app, ["pull", REMOTE_NAME])
 
+    assert result.exit_code == 0
     mock_merge.assert_not_called()
 
 
@@ -125,6 +131,7 @@ def test_pull_merges_when_remote_claude_json_nonempty(mock_config, connected_eng
         mock_ntf.return_value.__enter__.return_value.name = str(nonempty_tmp)
         result = runner.invoke(app, ["pull", REMOTE_NAME])
 
+    assert result.exit_code == 0
     mock_merge.assert_called_once()
 
 
@@ -160,6 +167,7 @@ def test_diff_includes_project_files(mock_config, connected_engine, tmp_path):
          patch("claudesync.cli.build_local_manifest", return_value={}) as mock_build:
         result = runner.invoke(app, ["diff", REMOTE_NAME])
 
+    assert result.exit_code == 0
     # build_local_manifest should have received CLAUDE.md in the file list
     call_args = mock_build.call_args[0][0]
     assert str(claude_md) in call_args

@@ -100,8 +100,14 @@ def load_config() -> Config:
             f"Config sync.backup_count must be an integer, got: "
             f"{sync_data.get('backup_count')!r}"
         ) from e
+    strategy = sync_data.get("strategy", "last-write-wins")
+    _valid_strategies = {"last-write-wins"}
+    if strategy not in _valid_strategies:
+        raise ValueError(
+            f"Config sync.strategy must be one of {_valid_strategies}, got: {strategy!r}"
+        )
     sync = SyncSettings(
-        strategy=sync_data.get("strategy", "last-write-wins"),
+        strategy=strategy,
         backup_count=backup_count,
     )
 

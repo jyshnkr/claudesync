@@ -14,10 +14,13 @@ class FileEntry(TypedDict):
     mtime: float
 
 
-class SyncedFileEntry(TypedDict):
-    """Manifest entry after a sync: adds the sync timestamp."""
+class _SyncedFileRequired(TypedDict):
     hash: str
     mtime: float
+
+
+class SyncedFileEntry(_SyncedFileRequired, total=False):
+    """Manifest entry after a sync: adds the optional sync timestamp."""
     last_synced: str
 
 

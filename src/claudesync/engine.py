@@ -81,6 +81,7 @@ class Engine:
         # Step 3: .claude.json (sanitized on push, temp dest on pull)
         if claude_json_path:
             res = self._rsync_claude_json(claude_json_path, direction=direction, dry_run=False)
+            summary.files_transferred += _count_transferred(res.stdout)
             if res.returncode != 0:
                 summary.errors.append(res.stderr)
 

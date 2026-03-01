@@ -110,11 +110,14 @@ def pair(
     console.print("[green]✓ SSH connection OK[/green]")
 
     # Auto-detect remote home via `echo $HOME`
-    res = subprocess.run(
-        engine._ssh_cmd() + ["echo $HOME"],
-        capture_output=True, text=True, timeout=10,
-    )
-    remote_home = res.stdout.strip() if res.returncode == 0 and res.stdout.strip() else f"/home/{user}"
+    try:
+        res = subprocess.run(
+            engine._ssh_cmd() + ["echo $HOME"],
+            capture_output=True, text=True, timeout=10,
+        )
+        remote_home = res.stdout.strip() if res.returncode == 0 and res.stdout.strip() else f"/home/{user}"
+    except (subprocess.TimeoutExpired, OSError):
+        remote_home = f"/home/{user}"
     console.print(f"[dim]Remote home: {remote_home}[/dim]")
 
     # Step 2: save config
@@ -583,8 +586,8 @@ def autostart_enable(
         console.print(f"  Interval: every {interval}s")
         console.print(f"  Plist:    {plist_path}")
         console.print(f"  Logs:     ~/.claudesync/logs/autosync-{remote_name}.log")
-    except subprocess.CalledProcessError as e:
-        console.print(f"[red]Failed to load plist: {e}[/red]")
+    except (subprocess.CalledProcessError, ValueError) as e:
+        console.print(f"[red]Failed to enable autostart: {e}[/red]")
         raise typer.Exit(1) from e
 
 
@@ -603,6 +606,6 @@ def autostart_disable(
             console.print(f"[green]✓ Auto-sync disabled for '{remote_name}'[/green]")
         else:
             console.print(f"[dim]No auto-sync job found for '{remote_name}'[/dim]")
-    except subprocess.CalledProcessError as e:
-        console.print(f"[red]Failed to unload plist: {e}[/red]")
+    except (subprocess.CalledProcessError, ValueError) as e:
+        console.print(f"[red]Failed to disable autostart: {e}[/red]")
         raise typer.Exit(1) from e

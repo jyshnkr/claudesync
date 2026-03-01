@@ -49,6 +49,8 @@ _NESTED_SENSITIVE_KEYS = {
     "credentials",
 }
 
+_NESTED_SENSITIVE_KEYS_LOWER = {k.lower() for k in _NESTED_SENSITIVE_KEYS}
+
 
 def _strip_sensitive_nested(obj: Any) -> Any:
     """Recursively remove _NESTED_SENSITIVE_KEYS from dict values.
@@ -59,7 +61,7 @@ def _strip_sensitive_nested(obj: Any) -> Any:
         return {
             k: _strip_sensitive_nested(v)
             for k, v in obj.items()
-            if k not in _NESTED_SENSITIVE_KEYS
+            if k.lower() not in _NESTED_SENSITIVE_KEYS_LOWER
         }
     if isinstance(obj, list):
         return [_strip_sensitive_nested(item) for item in obj]

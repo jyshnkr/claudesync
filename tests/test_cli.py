@@ -343,6 +343,30 @@ def test_autostart_disable_rejects_non_darwin():
         "launchd" in result.output.lower()
 
 
+def test_autostart_enable_catches_validation_error(mock_config):
+    """autostart enable must handle ValueError from install_plist with a clean error message."""
+    with patch("claudesync.cli.load_config", return_value=mock_config), \
+         patch("claudesync.cli.platform") as mock_platform, \
+         patch("shutil.which", return_value="/usr/local/bin/claudesync"), \
+         patch("claudesync.autostart.install_plist", side_effect=ValueError("bad remote name")):
+        mock_platform.system.return_value = "Darwin"
+        result = runner.invoke(app, ["autostart", "enable", REMOTE_NAME])
+
+    assert result.exit_code != 0
+    assert "Failed to enable autostart" in result.output or "bad remote name" in result.output
+
+
+def test_autostart_disable_catches_validation_error(mock_config):
+    """autostart disable must handle ValueError from uninstall_plist with a clean error message."""
+    with patch("claudesync.cli.platform") as mock_platform, \
+         patch("claudesync.autostart.uninstall_plist", side_effect=ValueError("bad remote name")):
+        mock_platform.system.return_value = "Darwin"
+        result = runner.invoke(app, ["autostart", "disable", REMOTE_NAME])
+
+    assert result.exit_code != 0
+    assert "Failed to disable autostart" in result.output or "bad remote name" in result.output
+
+
 def test_pull_manifest_rebuild_passes_include_history(mock_config, connected_engine, tmp_path):
     """Post-pull manifest rebuild must pass include_history from config to _collect_local_files.
 

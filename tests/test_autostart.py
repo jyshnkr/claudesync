@@ -98,12 +98,24 @@ def test_validate_remote_name_accepts_valid():
 
 
 def test_generate_plist_escapes_xml_chars(tmp_path):
-    """remote_name containing XML special chars must produce valid XML."""
-    from claudesync.autostart import generate_plist, _validate_remote_name
-    import pytest
-    # '&' in remote_name must be rejected by validation (not a valid name char)
-    with pytest.raises(ValueError, match="invalid"):
-        _validate_remote_name("foo&bar")
+    """claudesync_path and log_dir containing XML special chars must be properly escaped."""
+    from claudesync.autostart import generate_plist
+
+    # Use a valid remote_name but paths containing XML special characters
+    plist_content = generate_plist(
+        remote_name="studio",
+        claudesync_path="/usr/local/bin/claude&sync<1>",
+        interval_seconds=300,
+        log_dir=tmp_path / "logs&dir",
+    )
+
+    # Output must parse as valid XML
+    root = ET.fromstring(plist_content)
+    assert root.tag == "plist"
+
+    # The raw string must contain XML-escaped sequences, not bare special chars
+    assert "&amp;" in plist_content, "& in claudesync_path must be escaped to &amp;"
+    assert "&lt;" in plist_content, "< in claudesync_path must be escaped to &lt;"
 
 
 def test_generate_plist_rejects_invalid_remote_name(tmp_path):

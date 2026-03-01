@@ -89,7 +89,7 @@ def install_plist(remote_name: str, claudesync_path: str, interval_seconds: int 
     plist_path.parent.mkdir(parents=True, exist_ok=True)
     plist_path.write_text(generate_plist(remote_name, claudesync_path, interval_seconds, log_dir))
 
-    subprocess.run(["launchctl", "load", str(plist_path)], check=True)
+    subprocess.run(["/bin/launchctl", "load", str(plist_path)], check=True)
     return plist_path
 
 
@@ -100,7 +100,7 @@ def uninstall_plist(remote_name: str) -> bool:
         return False
 
     try:
-        subprocess.run(["launchctl", "unload", str(plist_path)], check=False)
+        subprocess.run(["/bin/launchctl", "unload", str(plist_path)], check=False)
     except FileNotFoundError:
         pass  # launchctl not available — just remove the plist file
     plist_path.unlink()

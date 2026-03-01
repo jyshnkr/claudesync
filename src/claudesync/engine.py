@@ -41,49 +41,37 @@ class Engine:
 
     def push(self, project_paths: list[Path], sanitized_claude_json: Path | None = None) -> dict[str, Any]:
         """Push local context to remote. Returns summary dict."""
-        summary: dict[str, Any] = {"files_transferred": 0, "errors": []}
-
-        # Phase 1: global ~/.claude/
-        result = self._rsync_global(direction="push", dry_run=False)
-        summary["files_transferred"] += _count_transferred(result.stdout)
-        if result.returncode != 0:
-            summary["errors"].append(result.stderr)
-
-        # Phase 2: per-project context
-        for proj in project_paths:
-            res = self._rsync_project(proj, direction="push", dry_run=False)
-            summary["files_transferred"] += _count_transferred(res.stdout)
-            if res.returncode != 0:
-                summary["errors"].append(res.stderr)
-
-        # Phase 3: sanitized .claude.json
-        if sanitized_claude_json:
-            res = self._rsync_claude_json(sanitized_claude_json, direction="push", dry_run=False)
-            if res.returncode != 0:
-                summary["errors"].append(res.stderr)
-
-        return summary
+        return self._sync("push", project_paths, claude_json_path=sanitized_claude_json)
 
     def pull(self, project_paths: list[Path], temp_claude_json_dest: Path | None = None) -> dict[str, Any]:
         """Pull remote context to local. Returns summary dict."""
+        return self._sync("pull", project_paths, claude_json_path=temp_claude_json_dest)
+
+    def _sync(
+        self,
+        direction: str,
+        project_paths: list[Path],
+        claude_json_path: Path | None = None,
+    ) -> dict[str, Any]:
+        """Internal: run rsync for global, per-project, and .claude.json."""
         summary: dict[str, Any] = {"files_transferred": 0, "errors": []}
 
-        # Phase 1: global ~/.claude/
-        result = self._rsync_global(direction="pull", dry_run=False)
+        # Step 1: global ~/.claude/
+        result = self._rsync_global(direction=direction, dry_run=False)
         summary["files_transferred"] += _count_transferred(result.stdout)
         if result.returncode != 0:
             summary["errors"].append(result.stderr)
 
-        # Phase 2: per-project context
+        # Step 2: per-project context
         for proj in project_paths:
-            res = self._rsync_project(proj, direction="pull", dry_run=False)
+            res = self._rsync_project(proj, direction=direction, dry_run=False)
             summary["files_transferred"] += _count_transferred(res.stdout)
             if res.returncode != 0:
                 summary["errors"].append(res.stderr)
 
-        # Phase 3: pull .claude.json to a temp location for merging
-        if temp_claude_json_dest:
-            res = self._rsync_claude_json(temp_claude_json_dest, direction="pull", dry_run=False)
+        # Step 3: .claude.json (sanitized on push, temp dest on pull)
+        if claude_json_path:
+            res = self._rsync_claude_json(claude_json_path, direction=direction, dry_run=False)
             if res.returncode != 0:
                 summary["errors"].append(res.stderr)
 
@@ -144,23 +132,22 @@ class Engine:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _ssh_cmd(self) -> list[str]:
+    @property
+    def _ssh_base_args(self) -> list[str]:
+        """Common SSH options shared by _ssh_cmd and _ssh_opt."""
         return [
-            "ssh",
             "-i", str(self.remote.ssh_key_path),
             "-o", "StrictHostKeyChecking=accept-new",
             "-o", "BatchMode=yes",
-            self.remote.address,
         ]
 
+    def _ssh_cmd(self) -> list[str]:
+        """SSH command for running remote commands (appends address)."""
+        return ["ssh"] + self._ssh_base_args + [self.remote.address]
+
     def _ssh_opt(self) -> list[str]:
-        """SSH options for rsync -e flag."""
-        return [
-            "ssh",
-            "-i", str(self.remote.ssh_key_path),
-            "-o", "StrictHostKeyChecking=accept-new",
-            "-o", "BatchMode=yes",
-        ]
+        """SSH options for rsync -e flag (prepends 'ssh')."""
+        return ["ssh"] + self._ssh_base_args
 
     def _base_rsync(self, dry_run: bool = False) -> list[str]:
         ssh_opt = " ".join(self._ssh_opt())

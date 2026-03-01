@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 from .backup import backup_file
-from .manifest import get_remote_manifest
 
 
 class FileState(str, Enum):
@@ -60,17 +59,22 @@ def detect_conflicts(
     remote_name: str,
     local_manifest: dict[str, dict[str, Any]],
     remote_manifest: dict[str, dict[str, Any]],
+    last_sync: dict[str, dict[str, Any]] | None = None,
 ) -> ConflictReport:
     """
     Compare local and remote file manifests against the last-sync manifest.
 
     local_manifest:  { path: { hash, mtime } }
     remote_manifest: { path: { hash, mtime } }
-    last_sync:       { path: { hash, mtime, last_synced } }
+    last_sync:       { path: { hash, mtime, last_synced } } — pass explicitly
+                     (callers retrieve via get_remote_manifest); if omitted,
+                     remote_name is used to load it (backward-compat shim).
 
     Returns a ConflictReport describing state of each file.
     """
-    last_sync = get_remote_manifest(remote_name)
+    if last_sync is None:
+        from .manifest import get_remote_manifest
+        last_sync = get_remote_manifest(remote_name)
     all_paths = set(local_manifest) | set(remote_manifest)
     file_states: list[FileConflict] = []
 

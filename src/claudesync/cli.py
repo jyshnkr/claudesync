@@ -3,12 +3,10 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
 from rich.table import Table
-from rich import print as rprint
 
 from .backup import list_backups, restore_backup
 from .config import Config, Remote, SyncSettings, load_config, save_config
@@ -168,31 +166,17 @@ def push(
     remote_name: str = typer.Argument(..., help="Remote name to push to"),
 ) -> None:
     """Sync local → remote."""
-    config = load_config()
-    remote = config.get_remote(remote_name)
-    engine = Engine(remote)
-    project_paths = config.project_paths()
+    config, remote, engine, project_paths = _setup_sync(remote_name)
 
     console.print(f"[bold]Pushing to [cyan]{remote_name}[/cyan] ({remote.address})...[/bold]")
-
-    with console.status("Testing SSH connection..."):
-        if not engine.check_connection():
-            console.print(f"[red]Cannot connect to {remote.address}. Check SSH config.[/red]")
-            raise typer.Exit(1)
+    _require_connection(engine, remote)
 
     with console.status("Building manifests..."):
-        local_files = get_global_include_paths()
-        for proj in project_paths:
-            for item in PROJECT_SYNC_ITEMS:
-                p = proj / item
-                if p.exists():
-                    local_files.append(str(p))
-
-        local_manifest = build_local_manifest(local_files)
-        remote_manifest = engine.get_remote_file_hashes(list(local_manifest.keys()))
+        local_manifest, remote_manifest = _build_manifests(engine, project_paths)
 
     with console.status("Detecting conflicts..."):
-        report = detect_conflicts(remote_name, local_manifest, remote_manifest)
+        last_sync = get_remote_manifest(remote_name)
+        report = detect_conflicts(remote_name, local_manifest, remote_manifest, last_sync)
         report = apply_conflict_resolutions(report, config.sync.backup_count)
 
     _print_conflict_report(report)
@@ -215,31 +199,17 @@ def pull(
     remote_name: str = typer.Argument(..., help="Remote name to pull from"),
 ) -> None:
     """Sync remote → local."""
-    config = load_config()
-    remote = config.get_remote(remote_name)
-    engine = Engine(remote)
-    project_paths = config.project_paths()
+    config, remote, engine, project_paths = _setup_sync(remote_name)
 
     console.print(f"[bold]Pulling from [cyan]{remote_name}[/cyan] ({remote.address})...[/bold]")
-
-    with console.status("Testing SSH connection..."):
-        if not engine.check_connection():
-            console.print(f"[red]Cannot connect to {remote.address}. Check SSH config.[/red]")
-            raise typer.Exit(1)
+    _require_connection(engine, remote)
 
     with console.status("Building manifests..."):
-        local_files = get_global_include_paths()
-        for proj in project_paths:
-            for item in PROJECT_SYNC_ITEMS:
-                p = proj / item
-                if p.exists():
-                    local_files.append(str(p))
-
-        local_manifest = build_local_manifest(local_files)
-        remote_manifest = engine.get_remote_file_hashes(list(local_manifest.keys()))
+        local_manifest, remote_manifest = _build_manifests(engine, project_paths)
 
     with console.status("Detecting conflicts..."):
-        report = detect_conflicts(remote_name, local_manifest, remote_manifest)
+        last_sync = get_remote_manifest(remote_name)
+        report = detect_conflicts(remote_name, local_manifest, remote_manifest, last_sync)
         report = apply_conflict_resolutions(report, config.sync.backup_count)
 
     _print_conflict_report(report)
@@ -270,17 +240,10 @@ def status(
     remote_name: str = typer.Argument(..., help="Remote name"),
 ) -> None:
     """Show what would change (dry-run)."""
-    config = load_config()
-    remote = config.get_remote(remote_name)
-    engine = Engine(remote)
-    project_paths = config.project_paths()
+    _, remote, engine, project_paths = _setup_sync(remote_name)
 
     console.print(f"[bold]Status vs [cyan]{remote_name}[/cyan] ({remote.address})[/bold]\n")
-
-    with console.status("Checking connection..."):
-        if not engine.check_connection():
-            console.print(f"[red]Cannot connect to {remote.address}[/red]")
-            raise typer.Exit(1)
+    _require_connection(engine, remote)
 
     output = engine.dry_run(project_paths, direction="push")
     console.print(output if output.strip() else "[dim]Everything up to date[/dim]")
@@ -291,29 +254,16 @@ def diff(
     remote_name: str = typer.Argument(..., help="Remote name"),
 ) -> None:
     """Show file-level diffs between local and remote."""
-    config = load_config()
-    remote = config.get_remote(remote_name)
-    engine = Engine(remote)
-    project_paths = config.project_paths()
+    _, remote, engine, project_paths = _setup_sync(remote_name)
 
     console.print(f"[bold]Diff vs [cyan]{remote_name}[/cyan] ({remote.address})[/bold]\n")
-
-    with console.status("Checking connection..."):
-        if not engine.check_connection():
-            console.print(f"[red]Cannot connect to {remote.address}[/red]")
-            raise typer.Exit(1)
+    _require_connection(engine, remote)
 
     with console.status("Building manifests..."):
-        local_files = get_global_include_paths()
-        for proj in project_paths:
-            for item in PROJECT_SYNC_ITEMS:
-                p = proj / item
-                if p.exists():
-                    local_files.append(str(p))
-        local_manifest = build_local_manifest(local_files)
-        remote_manifest = engine.get_remote_file_hashes(list(local_manifest.keys()))
+        local_manifest, remote_manifest = _build_manifests(engine, project_paths)
 
-    report = detect_conflicts(remote_name, local_manifest, remote_manifest)
+    last_sync = get_remote_manifest(remote_name)
+    report = detect_conflicts(remote_name, local_manifest, remote_manifest, last_sync)
 
     if not report.modified_files:
         console.print("[dim]No differences found[/dim]")
@@ -324,15 +274,15 @@ def diff(
     table.add_column("File")
 
     state_styles = {
-        FileState.MODIFIED_LOCAL: ("[yellow]local[/yellow]", "local newer"),
-        FileState.MODIFIED_REMOTE: ("[blue]remote[/blue]", "remote newer"),
-        FileState.CONFLICT: ("[red]conflict[/red]", "both changed"),
-        FileState.LOCAL_ONLY: ("[green]local-only[/green]", "not on remote"),
-        FileState.REMOTE_ONLY: ("[cyan]remote-only[/cyan]", "not local"),
+        FileState.MODIFIED_LOCAL: "[yellow]local[/yellow]",
+        FileState.MODIFIED_REMOTE: "[blue]remote[/blue]",
+        FileState.CONFLICT: "[red]conflict[/red]",
+        FileState.LOCAL_ONLY: "[green]local-only[/green]",
+        FileState.REMOTE_ONLY: "[cyan]remote-only[/cyan]",
     }
 
     for fc in report.modified_files:
-        label, _ = state_styles.get(fc.state, ("[dim]?[/dim]", ""))
+        label = state_styles.get(fc.state, "[dim]?[/dim]")
         table.add_row(label, fc.path)
 
     console.print(table)
@@ -364,7 +314,7 @@ def backup_list() -> None:
 @backup_app.command("restore")
 def backup_restore(
     backup_id: str = typer.Argument(..., help="Backup ID to restore"),
-    original_path: Optional[str] = typer.Argument(None, help="Specific file to restore (or all files if omitted)"),
+    original_path: str | None = typer.Argument(None, help="Specific file to restore (or all files if omitted)"),
 ) -> None:
     """Restore a backed-up file."""
     try:
@@ -377,8 +327,40 @@ def backup_restore(
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Shared helpers
 # ---------------------------------------------------------------------------
+
+def _setup_sync(remote_name: str) -> tuple[Config, Remote, Engine, list[Path]]:
+    """Load config, resolve remote, create engine, and get project paths."""
+    config = load_config()
+    remote = config.get_remote(remote_name)
+    engine = Engine(remote)
+    return config, remote, engine, config.project_paths()
+
+
+def _require_connection(engine: Engine, remote: Remote) -> None:
+    """Check SSH connection; print error and exit if unreachable."""
+    with console.status("Testing SSH connection..."):
+        if not engine.check_connection():
+            console.print(f"[red]Cannot connect to {remote.address}. Check SSH config.[/red]")
+            raise typer.Exit(1)
+
+
+def _build_manifests(
+    engine: Engine,
+    project_paths: list[Path],
+) -> tuple[dict, dict]:
+    """Build local and remote file manifests including all project files."""
+    local_files = get_global_include_paths()
+    for proj in project_paths:
+        for item in PROJECT_SYNC_ITEMS:
+            p = proj / item
+            if p.exists():
+                local_files.append(str(p))
+    local_manifest = build_local_manifest(local_files)
+    remote_manifest = engine.get_remote_file_hashes(list(local_manifest.keys()))
+    return local_manifest, remote_manifest
+
 
 def _print_conflict_report(report: ConflictReport) -> None:
     conflicts = [c for c in report.conflicts if c.state == FileState.CONFLICT]

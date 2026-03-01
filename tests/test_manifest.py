@@ -83,3 +83,28 @@ def test_load_manifest_rejects_non_dict_json(manifest_file):
 
     with pytest.raises(ValueError, match="corrupted"):
         load_manifest()
+
+
+def test_manifest_update_is_serialized(tmp_path, monkeypatch):
+    """Concurrent manifest updates must not lose data."""
+    import threading
+    monkeypatch.setattr("claudesync.manifest.MANIFEST_FILE", tmp_path / "manifest.json")
+    monkeypatch.setattr("claudesync.manifest.LOCK_FILE", tmp_path / "manifest.lock")
+
+    def update_remote(name):
+        manifest_data = {name: {"hash": "abc", "mtime": 1.0}}
+        update_manifest_for_remote(name, manifest_data)
+
+    threads = [
+        threading.Thread(target=update_remote, args=(f"remote{i}",))
+        for i in range(5)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # All 5 remotes must be present — none overwritten
+    saved = load_manifest()
+    for i in range(5):
+        assert f"remote{i}" in saved, f"remote{i} was lost due to race condition"

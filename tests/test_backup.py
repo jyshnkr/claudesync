@@ -126,7 +126,7 @@ def test_restore_backup_rejects_path_traversal(tmp_path, backup_dir):
 
 
 @pytest.mark.parametrize("bad_id", ["..", ".", "a/..", "../etc", "../../etc"])
-def test_restore_backup_rejects_malicious_backup_id(backup_dir, bad_id):
+def test_restore_backup_rejects_malicious_backup_id(bad_id):
     """restore_backup must reject backup_id values that are not a single safe segment."""
     with pytest.raises(ValueError, match="Invalid backup_id"):
         restore_backup(bad_id)

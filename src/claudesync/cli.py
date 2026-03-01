@@ -382,16 +382,18 @@ def _build_manifests(
 
 def _local_to_remote_path(local_path: str, project_paths: list[Path], remote: Remote) -> str:
     """Translate a local absolute path to its remote equivalent."""
-    local_home = str(Path.home())
+    lp = Path(local_path)
     for proj in project_paths:
-        proj_str = str(proj)
-        if local_path.startswith(proj_str + "/") or local_path == proj_str:
-            rel = local_path[len(proj_str):]
-            return f"{remote.remote_home}/{proj.name}{rel}"
-    if local_path.startswith(local_home + "/") or local_path == local_home:
-        rel = local_path[len(local_home):]
-        return f"{remote.remote_home}{rel}"
-    return local_path
+        try:
+            rel = lp.relative_to(proj)
+            return f"{remote.remote_home}/{proj.name}/{rel.as_posix()}"
+        except ValueError:
+            continue
+    try:
+        rel = lp.relative_to(Path.home())
+        return f"{remote.remote_home}/{rel.as_posix()}"
+    except ValueError:
+        return local_path
 
 
 def _print_conflict_report(report: ConflictReport) -> None:

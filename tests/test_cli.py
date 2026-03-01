@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
 
-from claudesync.cli import app
+from claudesync.cli import app, _local_to_remote_path
 from claudesync.config import Config, Remote, SyncSettings
 from claudesync.engine import SyncError, SyncSummary
 
@@ -171,6 +171,43 @@ def test_diff_includes_project_files(mock_config, connected_engine, tmp_path):
     # build_local_manifest should have received CLAUDE.md in the file list
     call_args = mock_build.call_args[0][0]
     assert str(claude_md) in call_args
+
+
+# ---------------------------------------------------------------------------
+# _local_to_remote_path
+# ---------------------------------------------------------------------------
+
+def test_local_to_remote_path_project_file(tmp_path):
+    """A path inside a registered project is mapped under remote_home/proj_name/."""
+    remote = Remote(host="h", user="u", ssh_key="~/.ssh/id_ed25519", remote_home="/home/u")
+    proj = tmp_path / "MyProject"
+    local_path = str(proj / "CLAUDE.md")
+
+    result = _local_to_remote_path(local_path, [proj], remote)
+
+    assert result == f"/home/u/MyProject/CLAUDE.md"
+
+
+def test_local_to_remote_path_home_relative(tmp_path, monkeypatch):
+    """A path under home (but not inside a project) is mapped under remote_home/."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    remote = Remote(host="h", user="u", ssh_key="~/.ssh/id_ed25519", remote_home="/home/u")
+    local_path = str(tmp_path / ".claude" / "settings.json")
+
+    result = _local_to_remote_path(local_path, [], remote)
+
+    assert result == "/home/u/.claude/settings.json"
+
+
+def test_local_to_remote_path_unrelated_returned_unchanged(tmp_path, monkeypatch):
+    """A path not under any project or home is returned unchanged."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    remote = Remote(host="h", user="u", ssh_key="~/.ssh/id_ed25519", remote_home="/home/u")
+    local_path = "/etc/passwd"
+
+    result = _local_to_remote_path(local_path, [], remote)
+
+    assert result == "/etc/passwd"
 
 
 def test_pull_rebuilds_manifest_after_sync(mock_config, connected_engine, tmp_path):

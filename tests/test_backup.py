@@ -125,6 +125,12 @@ def test_restore_backup_rejects_path_traversal(tmp_path, backup_dir):
         restore_backup("20260101T000000", "/../../../etc/passwd")
 
 
+def test_restore_backup_rejects_traversal_in_backup_id(backup_dir):
+    """restore_backup must reject backup_id values that escape BACKUP_DIR."""
+    with pytest.raises(ValueError, match="outside backup directory"):
+        restore_backup("../../etc")
+
+
 def test_restore_all_rejects_dest_outside_home(tmp_path, backup_dir, monkeypatch):
     """Bulk restore must reject files whose destination is outside $HOME."""
     # Set home to a subdirectory of tmp_path so other tmp paths are "outside"

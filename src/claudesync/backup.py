@@ -65,6 +65,9 @@ def restore_backup(backup_id: str, original_path: str | None = None) -> list[Pat
     Returns list of restored paths.
     """
     ts_dir = BACKUP_DIR / backup_id
+    # Guard: backup_id must resolve inside BACKUP_DIR
+    if not ts_dir.resolve().is_relative_to(BACKUP_DIR.resolve()):
+        raise ValueError(f"Invalid backup id outside backup directory: '{backup_id}'")
     if not ts_dir.exists():
         raise ValueError(f"Backup '{backup_id}' not found in {BACKUP_DIR}")
 
@@ -82,11 +85,14 @@ def restore_backup(backup_id: str, original_path: str | None = None) -> list[Pat
         # Guard restore destination to home directory
         if not dest.resolve().is_relative_to(Path.home().resolve()):
             raise ValueError(f"Restore destination outside home directory: '{original_path}'")
+        # Re-validate right before writing (mitigate symlink race)
+        if dest.is_symlink():
+            raise ValueError(f"Restore destination is a symlink: '{dest}'")
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(backup_file_path, dest)
         restored.append(dest)
     else:
-        backup_root = ts_dir.resolve()
+        backup_root = ts_dir.resolve()  # already validated above
         home_root = Path.home().resolve()
         for src in ts_dir.rglob("*"):
             if not src.is_file():
@@ -97,6 +103,9 @@ def restore_backup(backup_id: str, original_path: str | None = None) -> list[Pat
             dest = Path("/" + rel)
             if not dest.resolve().is_relative_to(home_root):
                 raise ValueError(f"Restore destination outside home directory: '{dest}'")
+            # Re-validate right before writing (mitigate symlink race)
+            if dest.is_symlink():
+                raise ValueError(f"Restore destination is a symlink: '{dest}'")
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
             restored.append(dest)

@@ -211,3 +211,14 @@ def test_get_remote_file_hashes_raises_on_missing_ssh(engine):
                side_effect=FileNotFoundError("No such file: ssh")):
         with pytest.raises(SyncError, match="SSH executable not found"):
             engine.get_remote_file_hashes(["/some/file"])
+
+
+def test_ssh_uses_dedicated_known_hosts_file(engine):
+    """SSH must use a project-local known_hosts, not pollute ~/.ssh/known_hosts."""
+    cmd = engine._ssh_cmd()
+    assert any("UserKnownHostsFile" in arg for arg in cmd)
+    # StrictHostKeyChecking must NOT be 'no' (insecure — accepts any key forever)
+    for i, arg in enumerate(cmd):
+        if arg == "-o" and i + 1 < len(cmd):
+            if cmd[i + 1].startswith("StrictHostKeyChecking="):
+                assert cmd[i + 1] != "StrictHostKeyChecking=no"

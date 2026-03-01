@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from .config import Remote
+from .config import CONFIG_DIR, Remote
 from .filters import build_global_filter_args, PROJECT_SYNC_ITEMS
 
 SyncDirection = Literal["push", "pull"]
@@ -147,9 +147,11 @@ class Engine:
     @property
     def _ssh_base_args(self) -> list[str]:
         """Common SSH options shared by _ssh_cmd and _ssh_opt."""
+        known_hosts = str(CONFIG_DIR / "known_hosts")
         return [
             "-i", str(self.remote.ssh_key_path),
             "-o", "StrictHostKeyChecking=accept-new",
+            "-o", f"UserKnownHostsFile={known_hosts}",
             "-o", "BatchMode=yes",
         ]
 

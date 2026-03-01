@@ -15,12 +15,15 @@ AGENT_VERSION = "1"
 def hash_files(paths: list) -> dict:
     result = {}
     for p in paths:
-        if os.path.isfile(p):
-            h = hashlib.sha256()
-            with open(p, "rb") as f:
-                for chunk in iter(lambda: f.read(65536), b""):
-                    h.update(chunk)
-            result[p] = {"hash": h.hexdigest(), "mtime": os.stat(p).st_mtime}
+        try:
+            if os.path.isfile(p):
+                h = hashlib.sha256()
+                with open(p, "rb") as f:
+                    for chunk in iter(lambda: f.read(65536), b""):
+                        h.update(chunk)
+                result[p] = {"hash": h.hexdigest(), "mtime": os.stat(p).st_mtime}
+        except (OSError, IOError):
+            continue  # skip unreadable files silently
     return result
 
 
@@ -33,5 +36,7 @@ if __name__ == "__main__":
     try:
         paths = json.loads(sys.argv[1])
     except json.JSONDecodeError:
+        sys.exit(1)
+    if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
         sys.exit(1)
     print(json.dumps(hash_files(paths)))

@@ -126,8 +126,8 @@ class Engine:
 
         try:
             self._ensure_remote_agent()
-        except FileNotFoundError as e:
-            raise SyncError(f"SSH executable not found: {e}") from e
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            raise SyncError(f"Failed to verify remote agent: {e}") from e
 
         paths_json = json.dumps(file_paths)
         cmd = self._ssh_cmd() + ["python3", REMOTE_AGENT_PATH, shlex.quote(paths_json)]
@@ -150,10 +150,14 @@ class Engine:
     def _ensure_remote_agent(self) -> None:
         """Deploy remote_agent.py to remote if missing or version-mismatched."""
         version_cmd = self._ssh_cmd() + ["python3", REMOTE_AGENT_PATH, "--version"]
-        result = subprocess.run(version_cmd, capture_output=True, text=True, timeout=10)
-
-        if result.returncode == 0 and result.stdout.strip() == AGENT_VERSION:
-            return  # agent present and current
+        try:
+            result = subprocess.run(version_cmd, capture_output=True, text=True, timeout=10)
+            if result.returncode == 0 and result.stdout.strip() == AGENT_VERSION:
+                return  # agent present and current
+        except subprocess.TimeoutExpired:
+            pass  # treat as "agent not present" — fall through to deploy
+        except FileNotFoundError as e:
+            raise SyncError(f"SSH executable not found: {e}") from e
 
         # Deploy via rsync
         agent_src = _get_agent_script_path()
@@ -162,7 +166,14 @@ class Engine:
             "rsync", "-az", "-e", " ".join(self._ssh_opt()),
             str(agent_src), remote_dir,
         ]
-        res = subprocess.run(deploy_cmd, capture_output=True, text=True, timeout=30)
+        try:
+            res = subprocess.run(deploy_cmd, capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired as e:
+            raise SyncError(
+                f"Timed out deploying remote agent to {self.remote.address}: {e}"
+            ) from e
+        except FileNotFoundError as e:
+            raise SyncError(f"SSH executable not found: {e}") from e
         if res.returncode != 0:
             raise SyncError(
                 f"Failed to deploy remote agent to {self.remote.address}: {res.stderr.strip()}"

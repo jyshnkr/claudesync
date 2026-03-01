@@ -205,7 +205,7 @@ def test_get_remote_file_hashes_raises_on_missing_ssh(engine):
     """FileNotFoundError (missing ssh binary) is wrapped as SyncError."""
     with patch("claudesync.engine.subprocess.run",
                side_effect=FileNotFoundError("No such file: ssh")):
-        with pytest.raises((SyncError, FileNotFoundError)):
+        with pytest.raises(SyncError):
             engine.get_remote_file_hashes(["/some/file"])
 
 
@@ -245,6 +245,32 @@ def test_ensure_remote_agent_not_redeployed_if_current(engine, mock_run):
     ]
     result = engine.get_remote_file_hashes(["/some/file"])
     assert mock_run.call_count == 2
+
+
+def test_ensure_remote_agent_handles_version_check_timeout(engine, mock_run):
+    """TimeoutExpired during version check must be treated as 'agent not present' and trigger deploy."""
+    import subprocess
+    mock_run.side_effect = [
+        subprocess.TimeoutExpired(cmd="ssh", timeout=10),  # version check times out
+        MagicMock(returncode=0, stdout="", stderr=""),      # rsync deploy succeeds
+        MagicMock(returncode=0, stdout="{}", stderr=""),    # hash fetch
+    ]
+    result = engine.get_remote_file_hashes(["/some/file"])
+    assert result == {}
+    # Verify that rsync (deploy) was called after the timeout
+    calls = [str(c) for c in mock_run.call_args_list]
+    assert any("rsync" in c for c in calls), "Agent must be deployed after version check timeout"
+
+
+def test_ensure_remote_agent_handles_deploy_timeout(engine, mock_run):
+    """TimeoutExpired during rsync deploy must raise SyncError."""
+    import subprocess
+    mock_run.side_effect = [
+        MagicMock(returncode=2, stdout="", stderr=""),          # version check fails → needs deploy
+        subprocess.TimeoutExpired(cmd="rsync", timeout=30),    # deploy times out
+    ]
+    with pytest.raises(SyncError):
+        engine.get_remote_file_hashes(["/some/file"])
 
 
 def test_ssh_uses_dedicated_known_hosts_file(engine):

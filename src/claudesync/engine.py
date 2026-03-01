@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import tempfile
 from pathlib import Path
@@ -25,13 +26,18 @@ class Engine:
 
     def check_connection(self) -> bool:
         """Test SSH connectivity to remote. Returns True if reachable."""
-        result = subprocess.run(
-            self._ssh_cmd() + ["echo", "ok"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return result.returncode == 0
+        try:
+            result = subprocess.run(
+                self._ssh_cmd() + ["echo", "ok"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            return result.returncode == 0
+        except subprocess.TimeoutExpired:
+            return False
+        except FileNotFoundError:
+            return False
 
     def push(self, project_paths: list[Path], sanitized_claude_json: Path | None = None) -> dict[str, Any]:
         """Push local context to remote. Returns summary dict."""
@@ -90,11 +96,15 @@ class Engine:
         result = self._rsync_global(direction=direction, dry_run=True)
         lines.append("=== Global ~/.claude/ ===")
         lines.append(result.stdout)
+        if result.returncode != 0:
+            lines.append(f"[ERROR] {result.stderr.strip()}")
 
         for proj in project_paths:
             res = self._rsync_project(proj, direction=direction, dry_run=True)
             lines.append(f"=== Project: {proj} ===")
             lines.append(res.stdout)
+            if res.returncode != 0:
+                lines.append(f"[ERROR] {res.stderr.strip()}")
 
         return "\n".join(lines)
 
@@ -116,14 +126,19 @@ class Engine:
             " for p in paths if os.path.isfile(p)]; "
             "print(json.dumps(result))"
         )
-        cmd = self._ssh_cmd() + ["python3", "-c", script, paths_json]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        cmd = self._ssh_cmd() + ["python3", "-c", script, shlex.quote(paths_json)]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired as e:
+            raise SyncError(f"SSH timed out getting remote file hashes: {e}") from e
         if result.returncode != 0:
-            return {}
+            raise SyncError(f"SSH command failed: {result.stderr.strip()}")
         try:
             return json.loads(result.stdout.strip())
-        except json.JSONDecodeError:
-            return {}
+        except json.JSONDecodeError as e:
+            raise SyncError(
+                f"Could not parse remote file hashes (SSH banner pollution?): {e}"
+            ) from e
 
     # ------------------------------------------------------------------
     # Internal helpers

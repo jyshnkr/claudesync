@@ -73,9 +73,15 @@ def restore_backup(backup_id: str, original_path: str | None = None) -> list[Pat
     if original_path:
         rel = original_path.lstrip("/")
         backup_file_path = ts_dir / rel
+        # Guard against path traversal in backup archive
+        if not backup_file_path.resolve().is_relative_to(ts_dir.resolve()):
+            raise ValueError(f"Path traversal detected in original_path: '{original_path}'")
         if not backup_file_path.exists():
             raise FileNotFoundError(f"'{original_path}' not found in backup '{backup_id}'")
         dest = Path(original_path)
+        # Guard restore destination to home directory
+        if not dest.resolve().is_relative_to(Path.home().resolve()):
+            raise ValueError(f"Restore destination outside home directory: '{original_path}'")
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(backup_file_path, dest)
         restored.append(dest)

@@ -23,15 +23,27 @@ def load_manifest() -> dict[str, Any]:
     """Load manifest from ~/.claudesync/manifest.json."""
     if not MANIFEST_FILE.exists():
         return {}
-    with MANIFEST_FILE.open() as f:
-        return json.load(f)
+    try:
+        with MANIFEST_FILE.open() as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"Manifest file {MANIFEST_FILE} is corrupted ({e}). "
+            "Delete or repair it to continue."
+        ) from e
 
 
 def save_manifest(manifest: dict[str, Any]) -> None:
     """Save manifest to ~/.claudesync/manifest.json."""
     MANIFEST_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with MANIFEST_FILE.open("w") as f:
-        json.dump(manifest, f, indent=2)
+    tmp = MANIFEST_FILE.with_suffix(".tmp")
+    try:
+        with tmp.open("w") as f:
+            json.dump(manifest, f, indent=2)
+        tmp.replace(MANIFEST_FILE)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def build_local_manifest(file_paths: list[str]) -> dict[str, dict[str, Any]]:

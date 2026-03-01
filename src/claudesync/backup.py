@@ -75,7 +75,7 @@ def restore_backup(backup_id: str, original_path: str | None = None) -> list[Pat
     # Guard: backup_id must resolve inside BACKUP_DIR
     if not ts_dir.resolve().is_relative_to(BACKUP_DIR.resolve()):
         raise ValueError(f"Invalid backup id outside backup directory: '{backup_id}'")
-    if not ts_dir.exists():
+    if not ts_dir.is_dir():
         raise ValueError(f"Backup '{backup_id}' not found in {BACKUP_DIR}")
 
     restored: list[Path] = []

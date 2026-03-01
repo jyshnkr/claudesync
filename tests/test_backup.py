@@ -132,6 +132,15 @@ def test_restore_backup_rejects_malicious_backup_id(bad_id):
         restore_backup(bad_id)
 
 
+def test_restore_backup_rejects_file_at_backup_id_path(backup_dir):
+    """restore_backup must reject a backup_id that points to a regular file, not a dir."""
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    (backup_dir / "20260101T000000").write_text("not a directory")
+
+    with pytest.raises(ValueError, match="not found"):
+        restore_backup("20260101T000000")
+
+
 def test_restore_all_rejects_dest_outside_home(tmp_path, backup_dir, monkeypatch):
     """Bulk restore must reject files whose destination is outside $HOME."""
     # Set home to a subdirectory of tmp_path so other tmp paths are "outside"

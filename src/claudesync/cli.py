@@ -14,7 +14,7 @@ from .backup import list_backups, restore_backup
 from .config import Config, Remote, SyncSettings, load_config, save_config
 from .conflicts import ConflictReport, FileState, apply_conflict_resolutions, detect_conflicts
 from .engine import Engine
-from .filters import get_global_include_paths
+from .filters import PROJECT_SYNC_ITEMS, get_global_include_paths
 from .manifest import (
     build_local_manifest,
     get_remote_manifest,
@@ -183,7 +183,7 @@ def push(
     with console.status("Building manifests..."):
         local_files = get_global_include_paths()
         for proj in project_paths:
-            for item in [".claude/settings.json", "CLAUDE.md", ".mcp.json"]:
+            for item in PROJECT_SYNC_ITEMS:
                 p = proj / item
                 if p.exists():
                     local_files.append(str(p))
@@ -230,7 +230,7 @@ def pull(
     with console.status("Building manifests..."):
         local_files = get_global_include_paths()
         for proj in project_paths:
-            for item in [".claude/settings.json", "CLAUDE.md", ".mcp.json"]:
+            for item in PROJECT_SYNC_ITEMS:
                 p = proj / item
                 if p.exists():
                     local_files.append(str(p))
@@ -305,6 +305,11 @@ def diff(
 
     with console.status("Building manifests..."):
         local_files = get_global_include_paths()
+        for proj in project_paths:
+            for item in PROJECT_SYNC_ITEMS:
+                p = proj / item
+                if p.exists():
+                    local_files.append(str(p))
         local_manifest = build_local_manifest(local_files)
         remote_manifest = engine.get_remote_file_hashes(list(local_manifest.keys()))
 

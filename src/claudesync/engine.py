@@ -164,7 +164,9 @@ class Engine:
 
     def _base_rsync(self, dry_run: bool = False) -> list[str]:
         ssh_opt = " ".join(self._ssh_opt())
-        cmd = ["rsync", "-avz", "--delete", "-e", ssh_opt]
+        # --itemize-changes outputs one line per transferred file (>f... or <f...)
+        # enabling _count_transferred to give an accurate count
+        cmd = ["rsync", "-avz", "--itemize-changes", "-e", ssh_opt]
         if dry_run:
             cmd.append("--dry-run")
         return cmd
@@ -178,7 +180,8 @@ class Engine:
         cmd = self._base_rsync(dry_run) + filter_args
 
         if direction == "push":
-            cmd += [local, remote]
+            # --delete removes files on remote that no longer exist locally
+            cmd += ["--delete", local, remote]
         else:
             cmd += [remote, local]
 
@@ -203,9 +206,21 @@ class Engine:
             res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
             results.append(res)
 
-        # Return a combined result (last one, or first failure)
+        if not results:
+            return _empty_result()
+
+        # Aggregate stdout from all results; collect all failure stderr messages
+        combined_stdout = "\n".join(r.stdout for r in results if r.stdout)
         failures = [r for r in results if r.returncode != 0]
-        return failures[0] if failures else (results[-1] if results else _empty_result())
+        if failures:
+            combined_stderr = "\n".join(r.stderr for r in failures if r.stderr)
+            return subprocess.CompletedProcess(
+                args=[], returncode=failures[0].returncode,
+                stdout=combined_stdout, stderr=combined_stderr,
+            )
+        return subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=combined_stdout, stderr="",
+        )
 
     def _rsync_claude_json(
         self,
@@ -225,14 +240,14 @@ class Engine:
 
 
 def _count_transferred(rsync_output: str) -> int:
-    """Count files transferred from rsync output."""
-    count = 0
-    for line in rsync_output.splitlines():
-        stripped = line.strip()
-        if stripped and not stripped.startswith(("sending", "sent", "total", "receiving", "received", ">f", ".")):
-            if "/" in stripped or "." in stripped:
-                count += 1
-    return count
+    """Count files transferred from rsync --itemize-changes output.
+
+    Lines starting with '>f' (sent) or '<f' (received) represent transferred files.
+    """
+    return sum(
+        1 for line in rsync_output.splitlines()
+        if line.startswith((">f", "<f"))
+    )
 
 
 def _empty_result() -> subprocess.CompletedProcess:

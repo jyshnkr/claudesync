@@ -129,9 +129,10 @@ def test_get_remote_file_hashes_empty_list(engine):
 
 
 def test_count_transferred_counts_paths():
-    output = "sending incremental file list\nsettings.json\nhistory.jsonl\n"
+    # --itemize-changes lines: >f = sent, <f = received
+    output = ">f+++++++++ settings.json\n>f+++++++++ history.jsonl\nsent 1234 bytes\n"
     count = _count_transferred(output)
-    assert count >= 1
+    assert count == 2
 
 
 def test_count_transferred_empty():

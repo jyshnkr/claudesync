@@ -9,10 +9,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from .config import Remote
+from .config import CONFIG_DIR, Remote
 from .filters import build_global_filter_args, PROJECT_SYNC_ITEMS
 
 SyncDirection = Literal["push", "pull"]
+
+AGENT_VERSION = "1"
+REMOTE_AGENT_PATH = "~/.claudesync/remote_agent.py"
+
+
+def _get_agent_script_path() -> Path:
+    """Return path to the bundled remote_agent.py."""
+    return Path(__file__).parent / "remote_agent.py"
 
 
 class SyncError(Exception):
@@ -48,25 +56,27 @@ class Engine:
         except FileNotFoundError:
             return False
 
-    def push(self, project_paths: list[Path], sanitized_claude_json: Path | None = None) -> SyncSummary:
+    def push(self, project_paths: list[Path], sanitized_claude_json: Path | None = None, *, include_history: bool = False) -> SyncSummary:
         """Push local context to remote. Returns SyncSummary."""
-        return self._sync("push", project_paths, claude_json_path=sanitized_claude_json)
+        return self._sync("push", project_paths, claude_json_path=sanitized_claude_json, include_history=include_history)
 
-    def pull(self, project_paths: list[Path], temp_claude_json_dest: Path | None = None) -> SyncSummary:
+    def pull(self, project_paths: list[Path], temp_claude_json_dest: Path | None = None, *, include_history: bool = False) -> SyncSummary:
         """Pull remote context to local. Returns SyncSummary."""
-        return self._sync("pull", project_paths, claude_json_path=temp_claude_json_dest)
+        return self._sync("pull", project_paths, claude_json_path=temp_claude_json_dest, include_history=include_history)
 
     def _sync(
         self,
         direction: SyncDirection,
         project_paths: list[Path],
         claude_json_path: Path | None = None,
+        *,
+        include_history: bool = False,
     ) -> SyncSummary:
         """Internal: run rsync for global, per-project, and .claude.json."""
         summary = SyncSummary()
 
         # Step 1: global ~/.claude/
-        result = self._rsync_global(direction=direction, dry_run=False)
+        result = self._rsync_global(direction=direction, dry_run=False, include_history=include_history)
         summary.files_transferred += _count_transferred(result.stdout)
         if result.returncode != 0:
             summary.errors.append(result.stderr)
@@ -87,11 +97,11 @@ class Engine:
 
         return summary
 
-    def dry_run(self, project_paths: list[Path], direction: SyncDirection = "push") -> str:
+    def dry_run(self, project_paths: list[Path], direction: SyncDirection = "push", *, include_history: bool = False) -> str:
         """Run rsync --dry-run, return combined output for display."""
         lines: list[str] = []
 
-        result = self._rsync_global(direction=direction, dry_run=True)
+        result = self._rsync_global(direction=direction, dry_run=True, include_history=include_history)
         lines.append("=== Global ~/.claude/ ===")
         lines.append(result.stdout)
         if result.returncode != 0:
@@ -108,23 +118,20 @@ class Engine:
 
     def get_remote_file_hashes(self, file_paths: list[str]) -> dict[str, dict[str, Any]]:
         """
-        SSH to remote and compute SHA-256 + mtime for each path.
+        SSH to remote, compute SHA-256 + mtime for each path via deployed agent.
+        Deploys/updates the agent if missing or outdated.
         Returns { path: { hash, mtime } } for files that exist.
         """
         if not file_paths:
             return {}
 
-        # Build a small Python one-liner to run on remote
+        try:
+            self._ensure_remote_agent()
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            raise SyncError(f"Failed to verify remote agent: {e}") from e
+
         paths_json = json.dumps(file_paths)
-        script = (
-            "import json, hashlib, os, sys; "
-            "paths = json.loads(sys.argv[1]); "
-            "result = {}; "
-            "[result.update({p: {'hash': hashlib.sha256(open(p,'rb').read()).hexdigest(), 'mtime': os.stat(p).st_mtime}}) "
-            " for p in paths if os.path.isfile(p)]; "
-            "print(json.dumps(result))"
-        )
-        cmd = self._ssh_cmd() + ["python3", "-c", script, shlex.quote(paths_json)]
+        cmd = self._ssh_cmd() + ["python3", REMOTE_AGENT_PATH, shlex.quote(paths_json)]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         except subprocess.TimeoutExpired as e:
@@ -132,13 +139,46 @@ class Engine:
         except FileNotFoundError as e:
             raise SyncError(f"SSH executable not found: {e}") from e
         if result.returncode != 0:
-            raise SyncError(f"SSH command failed: {result.stderr.strip()}")
+            raise SyncError(f"Remote agent failed: {result.stderr.strip()}")
         try:
             return json.loads(result.stdout.strip())
         except json.JSONDecodeError as e:
             raise SyncError(
-                f"Could not parse remote file hashes (SSH banner pollution?): {e}"
+                f"Could not parse remote file hashes (SSH banner pollution?): {e}\n"
+                f"Raw output: {result.stdout[:200]!r}"
             ) from e
+
+    def _ensure_remote_agent(self) -> None:
+        """Deploy remote_agent.py to remote if missing or version-mismatched."""
+        version_cmd = self._ssh_cmd() + ["python3", REMOTE_AGENT_PATH, "--version"]
+        try:
+            result = subprocess.run(version_cmd, capture_output=True, text=True, timeout=10)
+            if result.returncode == 0 and result.stdout.strip() == AGENT_VERSION:
+                return  # agent present and current
+        except subprocess.TimeoutExpired:
+            pass  # treat as "agent not present" — fall through to deploy
+        except FileNotFoundError as e:
+            raise SyncError(f"SSH executable not found: {e}") from e
+
+        # Deploy via rsync
+        agent_src = _get_agent_script_path()
+        remote_dir = f"{self.remote.address}:{self.remote.remote_home}/.claudesync/"
+        deploy_cmd = [
+            "rsync", "-az", "-e", " ".join(self._ssh_opt()),
+            str(agent_src), remote_dir,
+        ]
+        try:
+            res = subprocess.run(deploy_cmd, capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired as e:
+            raise SyncError(
+                f"Timed out deploying remote agent to {self.remote.address}: {e}"
+            ) from e
+        except FileNotFoundError as e:
+            raise SyncError(f"rsync executable not found: {e}") from e
+        if res.returncode != 0:
+            raise SyncError(
+                f"Failed to deploy remote agent to {self.remote.address}: {res.stderr.strip()}"
+            )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -147,9 +187,11 @@ class Engine:
     @property
     def _ssh_base_args(self) -> list[str]:
         """Common SSH options shared by _ssh_cmd and _ssh_opt."""
+        known_hosts = str(CONFIG_DIR / "known_hosts")
         return [
             "-i", str(self.remote.ssh_key_path),
             "-o", "StrictHostKeyChecking=accept-new",
+            "-o", f"UserKnownHostsFile={known_hosts}",
             "-o", "BatchMode=yes",
         ]
 
@@ -170,12 +212,12 @@ class Engine:
             cmd.append("--dry-run")
         return cmd
 
-    def _rsync_global(self, *, direction: SyncDirection, dry_run: bool) -> subprocess.CompletedProcess:
+    def _rsync_global(self, *, direction: SyncDirection, dry_run: bool, include_history: bool = False) -> subprocess.CompletedProcess:
         """Sync ~/.claude/ directory."""
         local = str(Path.home() / ".claude") + "/"
         remote = f"{self.remote.address}:{self.remote.remote_home}/.claude/"
 
-        filter_args = build_global_filter_args()
+        filter_args = build_global_filter_args(include_history=include_history)
         cmd = self._base_rsync(dry_run) + filter_args
 
         if direction == "push":

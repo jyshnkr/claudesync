@@ -7,7 +7,7 @@ from claudesync.sanitize import (
     sanitize_claude_json,
     write_sanitized_temp,
     merge_pulled_claude_json,
-    SENSITIVE_FIELDS,
+    SAFE_FIELDS,
 )
 
 
@@ -18,10 +18,15 @@ def full_claude_json(tmp_path) -> Path:
         "userID": "user-123",
         "cachedGrowthBookFeatures": {"feature": True},
         "passesEligibilityCache": True,
+        # SAFE_FIELDS members — these should survive sanitization
+        "theme": "dark",
+        "numStartups": 42,
+        "verbose": True,
+        "projects": {"/path/to/project": {"enabled": True}},
+        # Non-safe fields — should be stripped by the allowlist
         "showSpinnerTree": True,
         "skillUsage": {"my-skill": 5},
         "lastPlanModeUse": "2026-02-28",
-        "projects": {"/path/to/project": {"enabled": True}},
     }
     p = tmp_path / ".claude.json"
     p.write_text(json.dumps(data))
@@ -48,11 +53,15 @@ def test_sanitize_strips_eligibility(full_claude_json):
     assert "passesEligibilityCache" not in result
 
 
-def test_sanitize_keeps_ui_prefs(full_claude_json):
+def test_sanitize_keeps_safe_fields(full_claude_json):
     result = sanitize_claude_json(full_claude_json)
-    assert result["showSpinnerTree"] is True
-    assert result["skillUsage"] == {"my-skill": 5}
-    assert result["lastPlanModeUse"] == "2026-02-28"
+    assert result["theme"] == "dark"
+    assert result["numStartups"] == 42
+    assert result["verbose"] is True
+    # Non-safe fields must be stripped by the allowlist
+    assert "showSpinnerTree" not in result
+    assert "skillUsage" not in result
+    assert "lastPlanModeUse" not in result
 
 
 def test_sanitize_keeps_projects(full_claude_json):
@@ -72,7 +81,7 @@ def test_write_sanitized_temp(full_claude_json):
         with tmp.open() as f:
             data = json.load(f)
         assert "oauthAccount" not in data
-        assert "showSpinnerTree" in data
+        assert "theme" in data
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -82,13 +91,13 @@ def test_merge_preserves_local_auth(tmp_path):
     local.write_text(json.dumps({
         "oauthAccount": {"token": "local-secret"},
         "userID": "local-user",
-        "showSpinnerTree": False,
+        "theme": "light",
     }))
 
     pulled = tmp_path / "pulled.json"
     pulled.write_text(json.dumps({
-        "showSpinnerTree": True,
-        "skillUsage": {"new-skill": 3},
+        "theme": "dark",
+        "numStartups": 42,
     }))
 
     merge_pulled_claude_json(pulled, local)
@@ -96,10 +105,10 @@ def test_merge_preserves_local_auth(tmp_path):
     with local.open() as f:
         merged = json.load(f)
 
-    # Remote prefs should win
-    assert merged["showSpinnerTree"] is True
-    assert merged["skillUsage"] == {"new-skill": 3}
-    # Local auth preserved
+    # Safe fields from remote override local
+    assert merged["theme"] == "dark"
+    assert merged["numStartups"] == 42
+    # Local auth preserved (not overwritten by remote)
     assert merged["oauthAccount"] == {"token": "local-secret"}
     assert merged["userID"] == "local-user"
 
@@ -107,13 +116,13 @@ def test_merge_preserves_local_auth(tmp_path):
 def test_merge_with_no_local_file(tmp_path):
     local = tmp_path / "missing.json"
     pulled = tmp_path / "pulled.json"
-    pulled.write_text(json.dumps({"showSpinnerTree": True}))
+    pulled.write_text(json.dumps({"theme": "dark"}))
 
     merge_pulled_claude_json(pulled, local)
 
     with local.open() as f:
         merged = json.load(f)
-    assert merged["showSpinnerTree"] is True
+    assert merged["theme"] == "dark"
 
 
 def test_sanitize_strips_primary_api_key(full_claude_json):
@@ -199,3 +208,55 @@ def test_merge_rejects_non_dict_local(tmp_path):
 
     with pytest.raises(ValueError, match="must be a JSON object"):
         merge_pulled_claude_json(pulled, local)
+
+
+def test_sanitizer_uses_allowlist_not_blocklist(tmp_path):
+    """Unknown fields must be stripped, not passed through."""
+    source = tmp_path / ".claude.json"
+    source.write_text(json.dumps({
+        "theme": "dark",
+        "numStartups": 42,
+        "unknownFutureField": "should-not-sync",
+        "anotherNewField": {"nested": "data"},
+    }))
+    result = sanitize_claude_json(source)
+    assert "theme" in result
+    assert "numStartups" in result
+    assert "unknownFutureField" not in result, (
+        "Sanitizer must use allowlist — unknown fields must be stripped"
+    )
+    assert "anotherNewField" not in result
+
+
+def test_sanitizer_strips_known_sensitive_fields(tmp_path):
+    """All previously sensitive fields must still be absent."""
+    source = tmp_path / ".claude.json"
+    source.write_text(json.dumps({
+        "oauthAccount": "token",
+        "primaryApiKey": "sk-ant-xxxx",
+        "userID": "user_123",
+        "theme": "dark",
+    }))
+    result = sanitize_claude_json(source)
+    assert "oauthAccount" not in result
+    assert "primaryApiKey" not in result
+    assert "userID" not in result
+    assert "theme" in result
+
+
+def test_sanitize_strips_sensitive_inside_list(tmp_path):
+    """_strip_sensitive_nested must recurse into lists, not skip dicts inside them."""
+    source = tmp_path / ".claude.json"
+    source.write_text(json.dumps({
+        "mcpServers": {
+            "s": {
+                "commands": [
+                    {"env": {"SECRET": "x"}, "name": "cmd"}
+                ]
+            }
+        }
+    }))
+    result = sanitize_claude_json(source)
+    cmd = result["mcpServers"]["s"]["commands"][0]
+    assert "env" not in cmd, "env inside a list element must be stripped"
+    assert cmd["name"] == "cmd"

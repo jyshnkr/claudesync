@@ -3,10 +3,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# Paths under ~/.claude/ to include (relative to ~/.claude/)
-GLOBAL_SYNC_INCLUDES = [
+# Base items synced regardless of settings
+_GLOBAL_SYNC_BASE = [
     "settings.json",
-    "history.jsonl",
     "projects/",
     "tasks/",
     "plans/",
@@ -23,34 +22,36 @@ PROJECT_SYNC_ITEMS = [
 ]
 
 
-def build_global_filter_args() -> list[str]:
-    """Build rsync filter args for global ~/.claude/ sync.
+def get_global_sync_includes(include_history: bool = False) -> list[str]:
+    """Return the list of items to sync under ~/.claude/.
 
-    Only GLOBAL_SYNC_INCLUDES is needed: rsync processes rules top-to-bottom,
-    so an explicit include list followed by a single '- *' catch-all is both
-    sufficient and safer than maintaining a separate exclude list — any new
-    ~/.claude/ subdirectory is automatically excluded unless added to INCLUDES.
+    history.jsonl is opt-in: it contains full conversation history
+    including pasted code, API keys, and internal project data.
     """
-    args: list[str] = []
+    items = list(_GLOBAL_SYNC_BASE)
+    if include_history:
+        items.insert(1, "history.jsonl")  # keep ordering sensible
+    return items
 
-    # Protect included directories so rsync traverses into them
-    for item in GLOBAL_SYNC_INCLUDES:
+
+def build_global_filter_args(include_history: bool = False) -> list[str]:
+    """Build rsync filter args for global ~/.claude/ sync."""
+    args: list[str] = []
+    for item in get_global_sync_includes(include_history=include_history):
         if item.endswith("/"):
             args += ["--filter", f"+ {item}**"]
         else:
             args += ["--filter", f"+ {item}"]
-
     # Exclude everything not explicitly included above
     args += ["--filter", "- *"]
-
     return args
 
 
-def get_global_include_paths() -> list[str]:
+def get_global_include_paths(include_history: bool = False) -> list[str]:
     """Return include paths relative to ~/.claude/ for manifest building."""
     paths = []
     claude_dir = Path.home() / ".claude"
-    for item in GLOBAL_SYNC_INCLUDES:
+    for item in get_global_sync_includes(include_history=include_history):
         full = claude_dir / item
         if full.exists():
             if full.is_dir():

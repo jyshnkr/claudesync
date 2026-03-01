@@ -80,3 +80,49 @@ def test_ssh_key_path_expands_tilde():
     r = Remote(host="h", user="u", ssh_key="~/.ssh/id_rsa")
     assert not str(r.ssh_key_path).startswith("~")
     assert "id_rsa" in str(r.ssh_key_path)
+
+
+def test_sync_settings_defaults_include_history_false():
+    s = SyncSettings()
+    assert s.include_history is False
+
+
+def test_include_history_true_value(tmp_path, monkeypatch):
+    """Native TOML boolean true must parse as Python True."""
+    config_file = tmp_path / "config.toml"
+    monkeypatch.setattr("claudesync.config.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("claudesync.config.CONFIG_FILE", config_file)
+
+    config_file.write_text('[sync]\ninclude_history = true\n')
+
+    loaded = load_config()
+    assert loaded.sync.include_history is True
+
+
+def test_include_history_string_false_treated_as_false(tmp_path, monkeypatch):
+    """String 'false' in TOML must parse as Python False, not True.
+
+    bool('false') is True because non-empty strings are truthy — the _parse_bool()
+    helper must handle this case correctly.
+    """
+    config_file = tmp_path / "config.toml"
+    monkeypatch.setattr("claudesync.config.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("claudesync.config.CONFIG_FILE", config_file)
+
+    # Write raw TOML with include_history as a string (not a native bool)
+    config_file.write_text('[sync]\ninclude_history = "false"\n')
+
+    loaded = load_config()
+    assert loaded.sync.include_history is False
+
+
+def test_include_history_string_true_treated_as_true(tmp_path, monkeypatch):
+    """String 'true' in TOML must parse as Python True."""
+    config_file = tmp_path / "config.toml"
+    monkeypatch.setattr("claudesync.config.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("claudesync.config.CONFIG_FILE", config_file)
+
+    config_file.write_text('[sync]\ninclude_history = "true"\n')
+
+    loaded = load_config()
+    assert loaded.sync.include_history is True

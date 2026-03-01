@@ -1,6 +1,8 @@
 """ClaudeSync CLI — bi-directional Claude Code context sync over SSH."""
 from __future__ import annotations
 
+import platform
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -13,7 +15,7 @@ from .backup import list_backups, restore_backup
 from .config import Config, Remote, SyncSettings, load_config, save_config
 from .conflicts import ConflictReport, FileState, apply_conflict_resolutions, detect_conflicts
 from .engine import Engine, SyncSummary
-from .filters import PROJECT_SYNC_ITEMS, get_global_include_paths
+from .filters import PROJECT_SYNC_ITEMS, get_global_include_paths, get_global_sync_includes
 from .manifest import (
     build_local_manifest,
     get_remote_manifest,
@@ -29,10 +31,12 @@ app = typer.Typer(
 remote_app = typer.Typer(help="Manage remote machines.", no_args_is_help=True)
 project_app = typer.Typer(help="Manage registered projects.", no_args_is_help=True)
 backup_app = typer.Typer(help="Manage conflict backups.", no_args_is_help=True)
+autostart_app = typer.Typer(help="Manage auto-sync on macOS.", no_args_is_help=True)
 
 app.add_typer(remote_app, name="remote")
 app.add_typer(project_app, name="project")
 app.add_typer(backup_app, name="backup")
+app.add_typer(autostart_app, name="autostart")
 
 console = Console()
 
@@ -66,11 +70,109 @@ def init() -> None:
         console.print("[dim]Config saved anyway. Run 'claudesync remote add' to reconfigure.[/dim]")
 
     save_config(config)
-    console.print(f"\n[green]Config saved to ~/.claudesync/config.toml[/green]")
+    console.print("\n[green]Config saved to ~/.claudesync/config.toml[/green]")
     console.print(f"  Remote '{remote_name}' → {remote.address}")
     console.print("\nNext steps:")
-    console.print(f"  claudesync project add ~/Projects/MyProject")
+    console.print("  claudesync project add ~/Projects/MyProject")
     console.print(f"  claudesync push {remote_name}")
+
+
+# ---------------------------------------------------------------------------
+# pair
+# ---------------------------------------------------------------------------
+
+@app.command()
+def pair(
+    name: str = typer.Option(..., "--name", "-n", help="Name for this remote (e.g. 'studio')"),
+    address: str = typer.Option(..., "--address", "-a", help="user@host of the remote machine"),
+    key: str = typer.Option("~/.ssh/id_ed25519", "--key", "-k", help="SSH private key path"),
+    no_push: bool = typer.Option(False, "--no-push", help="Skip initial push (just configure)"),
+) -> None:
+    """Pair with another machine — add remote, verify SSH, and do initial push."""
+    if "@" not in address:
+        console.print("[red]Error: address must be in user@host format[/red]")
+        raise typer.Exit(1)
+
+    user, host = address.split("@", 1)
+
+    console.print(f"[bold cyan]Pairing with [white]{name}[/white] ({address})[/bold cyan]\n")
+
+    # Step 1: test connection and detect remote home
+    console.print("[dim]Testing SSH connection...[/dim]")
+    tmp_remote = Remote(host=host, user=user, ssh_key=key, remote_home=f"/home/{user}")
+    engine = Engine(tmp_remote)
+
+    if not engine.check_connection():
+        console.print(f"[red]✗ Cannot connect to {address}.[/red]")
+        console.print("[dim]Check: is the host reachable? Is the SSH key correct?[/dim]")
+        raise typer.Exit(1)
+
+    console.print("[green]✓ SSH connection OK[/green]")
+
+    # Auto-detect remote home via `echo $HOME`
+    try:
+        res = subprocess.run(
+            engine._ssh_cmd() + ["echo $HOME"],
+            capture_output=True, text=True, timeout=10,
+        )
+        remote_home = res.stdout.strip() if res.returncode == 0 and res.stdout.strip() else f"/home/{user}"
+    except (subprocess.TimeoutExpired, OSError):
+        remote_home = f"/home/{user}"
+    console.print(f"[dim]Remote home: {remote_home}[/dim]")
+
+    # Step 2: save config
+    config = load_config()
+    remote = Remote(host=host, user=user, ssh_key=key, remote_home=remote_home)
+    config.remotes[name] = remote
+    save_config(config)
+    console.print(f"[green]✓ Remote '{name}' saved to config[/green]")
+
+    if no_push:
+        console.print("\n[bold]Pairing complete (no push).[/bold]")
+        console.print(f"Run [cyan]claudesync push {name}[/cyan] when ready.")
+        return
+
+    # Step 3: initial push
+    console.print(f"\n[dim]Running initial push to {name}...[/dim]")
+    engine = Engine(remote)
+    project_paths = config.project_paths()
+
+    with console.status("Building manifests..."):
+        local_manifest, remote_manifest = _build_manifests(engine, project_paths, include_history=config.sync.include_history)
+
+    with console.status("Detecting conflicts..."):
+        last_sync = get_remote_manifest(name)
+        report = detect_conflicts(name, local_manifest, remote_manifest, last_sync)
+        report = apply_conflict_resolutions(report, config.sync.backup_count)
+
+    _print_conflict_report(report)
+
+    with console.status("Pushing files..."):
+        sanitized_tmp = write_sanitized_temp()
+        try:
+            summary = engine.push(project_paths, sanitized_claude_json=sanitized_tmp, include_history=config.sync.include_history)
+        finally:
+            sanitized_tmp.unlink(missing_ok=True)
+
+    if not summary.errors:
+        update_manifest_for_remote(name, local_manifest)
+
+    _print_summary(summary, "push")
+
+    if not summary.errors:
+        console.print(f"\n[bold green]✓ Paired with {name}![/bold green]")
+        console.print(f"\nOn [bold]{name}[/bold], run:")
+        console.print(f"  [cyan]claudesync remote add here {_get_local_address()} --remote-home {Path.home()}[/cyan]")
+        console.print("  [cyan]claudesync pull here[/cyan]")
+    else:
+        console.print("\n[yellow]⚠ Pairing incomplete — push encountered errors. Fix the issues above and retry.[/yellow]")
+
+
+def _get_local_address() -> str:
+    """Best-effort: return current machine's user@hostname."""
+    import socket
+    hostname = socket.gethostname()
+    return f"{Path.home().name}@{hostname}"
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +275,7 @@ def push(
     _require_connection(engine, remote)
 
     with console.status("Building manifests..."):
-        local_manifest, remote_manifest = _build_manifests(engine, project_paths)
+        local_manifest, remote_manifest = _build_manifests(engine, project_paths, include_history=config.sync.include_history)
 
     with console.status("Detecting conflicts..."):
         last_sync = get_remote_manifest(remote_name)
@@ -185,7 +287,7 @@ def push(
     with console.status("Syncing files..."):
         sanitized_tmp = write_sanitized_temp()
         try:
-            summary = engine.push(project_paths, sanitized_claude_json=sanitized_tmp)
+            summary = engine.push(project_paths, sanitized_claude_json=sanitized_tmp, include_history=config.sync.include_history)
         finally:
             sanitized_tmp.unlink(missing_ok=True)
 
@@ -206,7 +308,7 @@ def pull(
     _require_connection(engine, remote)
 
     with console.status("Building manifests..."):
-        local_manifest, remote_manifest = _build_manifests(engine, project_paths)
+        local_manifest, remote_manifest = _build_manifests(engine, project_paths, include_history=config.sync.include_history)
 
     with console.status("Detecting conflicts..."):
         last_sync = get_remote_manifest(remote_name)
@@ -220,14 +322,14 @@ def pull(
             tmp_claude_json = Path(tf.name)
 
         try:
-            summary = engine.pull(project_paths, temp_claude_json_dest=tmp_claude_json)
+            summary = engine.pull(project_paths, temp_claude_json_dest=tmp_claude_json, include_history=config.sync.include_history)
             if tmp_claude_json.exists() and tmp_claude_json.stat().st_size > 0:
                 merge_pulled_claude_json(tmp_claude_json)
         finally:
             tmp_claude_json.unlink(missing_ok=True)
 
     if not summary.errors:
-        update_manifest_for_remote(remote_name, build_local_manifest(_collect_local_files(project_paths)))
+        update_manifest_for_remote(remote_name, build_local_manifest(_collect_local_files(project_paths, include_history=config.sync.include_history)))
 
     _print_summary(summary, "pull")
 
@@ -324,7 +426,7 @@ def backup_restore(
             console.print(f"[green]Restored:[/green] {path}")
     except (ValueError, FileNotFoundError) as e:
         console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 # ---------------------------------------------------------------------------
@@ -347,9 +449,9 @@ def _require_connection(engine: Engine, remote: Remote) -> None:
             raise typer.Exit(1)
 
 
-def _collect_local_files(project_paths: list[Path]) -> list[str]:
+def _collect_local_files(project_paths: list[Path], include_history: bool = False) -> list[str]:
     """Collect all syncable local file paths (global + per-project)."""
-    local_files = get_global_include_paths()
+    local_files = get_global_include_paths(include_history=include_history)
     for proj in project_paths:
         for item in PROJECT_SYNC_ITEMS:
             p = proj / item
@@ -361,9 +463,10 @@ def _collect_local_files(project_paths: list[Path]) -> list[str]:
 def _build_manifests(
     engine: Engine,
     project_paths: list[Path],
+    include_history: bool = False,
 ) -> tuple[dict, dict]:
     """Build local and remote file manifests including all project files."""
-    local_manifest = build_local_manifest(_collect_local_files(project_paths))
+    local_manifest = build_local_manifest(_collect_local_files(project_paths, include_history=include_history))
 
     # Translate local paths to remote paths before querying remote hashes
     remote_paths = [_local_to_remote_path(p, project_paths, engine.remote) for p in local_manifest]
@@ -395,6 +498,23 @@ def _local_to_remote_path(local_path: str, project_paths: list[Path], remote: Re
         return local_path
 
 
+def _human_age(mtime: float | None) -> str:
+    """Return human-readable age like '2 hours ago', '3 days ago'."""
+    import time
+    if mtime is None:
+        return "unknown time"
+    delta = time.time() - mtime
+    if delta < 60:
+        return "just now"
+    if delta < 3600:
+        return f"{int(delta / 60)} min ago"
+    if delta < 86400:
+        hours = int(delta / 3600)
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    days = int(delta / 86400)
+    return f"{days} day{'s' if days != 1 else ''} ago"
+
+
 def _print_conflict_report(report: ConflictReport) -> None:
     conflicts = [c for c in report.conflicts if c.state == FileState.CONFLICT]
     if not conflicts:
@@ -402,9 +522,18 @@ def _print_conflict_report(report: ConflictReport) -> None:
 
     console.print(f"\n[yellow]⚠ {len(conflicts)} conflict(s) resolved (last-write-wins):[/yellow]")
     for fc in conflicts:
-        winner_label = f"[green]{fc.winner}[/green]" if fc.winner else "?"
-        backup_note = f" (backup: {fc.backup_path})" if fc.backup_path else ""
-        console.print(f"  {fc.path} → winner: {winner_label}{backup_note}")
+        name = Path(fc.path).name
+        local_age = _human_age(fc.local_mtime)
+        remote_age = _human_age(fc.remote_mtime)
+
+        local_label = "[red]← LOST[/red]" if fc.winner == "remote" else "[green]← WON[/green]"
+        remote_label = "[green]← WON[/green]" if fc.winner == "remote" else "[red]← LOST[/red]"
+
+        console.print(f"  [bold]{name}[/bold]")
+        console.print(f"    local:  modified {local_age}  {local_label}")
+        console.print(f"    remote: modified {remote_age}  {remote_label}")
+        if fc.backup_path:
+            console.print(f"    backup: [dim]{fc.backup_path}[/dim]")
     console.print()
 
 
@@ -417,6 +546,66 @@ def _print_summary(summary: SyncSummary, direction: str) -> None:
     console.print(f"  {arrow} {n} file(s) transferred")
 
     if errors:
-        console.print(f"\n[yellow]Warnings:[/yellow]")
+        console.print("\n[yellow]Warnings:[/yellow]")
         for err in errors:
             console.print(f"  {err.strip()}")
+
+
+# ---------------------------------------------------------------------------
+# autostart (macOS launchd)
+# ---------------------------------------------------------------------------
+
+@autostart_app.command("enable")
+def autostart_enable(
+    remote_name: str = typer.Argument(..., help="Remote name to auto-pull from"),
+    interval: int = typer.Option(300, "--interval", "-i", help="Sync interval in seconds (default 300 = 5 min)"),
+) -> None:
+    """Install a launchd job to auto-pull from a remote every N seconds."""
+    if platform.system() != "Darwin":
+        console.print("[red]autostart is macOS-only (uses launchd).[/red]")
+        raise typer.Exit(1)
+
+    if interval <= 0:
+        console.print(f"[red]Error: --interval must be a positive integer, got {interval}.[/red]")
+        raise typer.Exit(1)
+
+    config = load_config()
+    try:
+        config.get_remote(remote_name)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from e
+
+    import shutil
+    claudesync_path = shutil.which("claudesync") or "claudesync"
+
+    from .autostart import install_plist
+    try:
+        plist_path = install_plist(remote_name, claudesync_path, interval)
+        console.print(f"[green]✓ Auto-sync enabled for '{remote_name}'[/green]")
+        console.print(f"  Interval: every {interval}s")
+        console.print(f"  Plist:    {plist_path}")
+        console.print(f"  Logs:     ~/.claudesync/logs/autosync-{remote_name}.log")
+    except (subprocess.CalledProcessError, ValueError) as e:
+        console.print(f"[red]Failed to enable autostart: {e}[/red]")
+        raise typer.Exit(1) from e
+
+
+@autostart_app.command("disable")
+def autostart_disable(
+    remote_name: str = typer.Argument(..., help="Remote name to stop auto-syncing"),
+) -> None:
+    """Remove the launchd auto-sync job for a remote."""
+    if platform.system() != "Darwin":
+        console.print("[red]autostart is macOS-only (uses launchd).[/red]")
+        raise typer.Exit(1)
+
+    from .autostart import uninstall_plist
+    try:
+        if uninstall_plist(remote_name):
+            console.print(f"[green]✓ Auto-sync disabled for '{remote_name}'[/green]")
+        else:
+            console.print(f"[dim]No auto-sync job found for '{remote_name}'[/dim]")
+    except (subprocess.CalledProcessError, ValueError) as e:
+        console.print(f"[red]Failed to disable autostart: {e}[/red]")
+        raise typer.Exit(1) from e

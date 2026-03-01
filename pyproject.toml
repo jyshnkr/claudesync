@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "claudesync"
-version = "0.2.0"
+version = "0.3.0"
 description = "Bi-directional Claude Code context sync over SSH"
 requires-python = ">=3.9"
 dependencies = [
@@ -22,6 +22,11 @@ dev = [
     "pytest>=7.0.0",
     "pytest-mock>=3.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/jyshnkr/claudesync"
+Repository = "https://github.com/jyshnkr/claudesync"
+Changelog = "https://github.com/jyshnkr/claudesync/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/claudesync"]

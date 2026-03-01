@@ -45,6 +45,7 @@ class Remote:
 class SyncSettings:
     strategy: SyncStrategy = "last-write-wins"
     backup_count: int = 10
+    include_history: bool = False   # opt-in — see filters.py for why
 
     def __post_init__(self) -> None:
         if self.backup_count < 1:
@@ -109,6 +110,7 @@ def load_config() -> Config:
     sync = SyncSettings(
         strategy=strategy,
         backup_count=backup_count,
+        include_history=_parse_bool(sync_data.get("include_history", False)),
     )
 
     projects = raw.get("projects", {}).get("paths", [])
@@ -138,6 +140,7 @@ def save_config(config: Config) -> None:
     data["sync"] = {
         "strategy": config.sync.strategy,
         "backup_count": config.sync.backup_count,
+        "include_history": config.sync.include_history,
     }
 
     original_mode = CONFIG_FILE.stat().st_mode if CONFIG_FILE.exists() else None
@@ -157,3 +160,27 @@ def _validate_remote(name: str, data: dict) -> None:
     for required in ("host", "user"):
         if required not in data:
             raise ValueError(f"Remote '{name}' missing required field: '{required}'")
+
+
+def _parse_bool(value: object) -> bool:
+    """Parse a config bool value that may be a native bool or a string.
+
+    TOML natively supports booleans, but users may write include_history = "false"
+    (a string). bool("false") returns True because non-empty strings are truthy, so
+    we must handle string forms explicitly.
+
+    Raises ValueError for unrecognised types or string values.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        if value.lower() == "true":
+            return True
+        if value.lower() == "false":
+            return False
+        raise ValueError(
+            f"Config include_history must be true or false, got string: {value!r}"
+        )
+    raise ValueError(
+        f"Config include_history must be a boolean, got {type(value).__name__}: {value!r}"
+    )

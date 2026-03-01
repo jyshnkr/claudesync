@@ -1,8 +1,10 @@
 """Manifest tracking — records file hashes + timestamps per remote."""
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypedDict
@@ -29,6 +31,19 @@ LocalManifest = dict[str, FileEntry]
 RemoteManifest = dict[str, FileEntry]
 
 MANIFEST_FILE = Path.home() / ".claudesync" / "manifest.json"
+LOCK_FILE = Path.home() / ".claudesync" / "manifest.lock"
+
+
+@contextmanager
+def _manifest_lock():
+    """Exclusive file lock for manifest read-modify-write cycles."""
+    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with LOCK_FILE.open("w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
 
 
 def compute_file_hash(path: Path) -> str:
@@ -97,21 +112,22 @@ def update_manifest_for_remote(
     remote_name: str,
     local_manifest: LocalManifest,
 ) -> None:
-    """Update the manifest entries for a remote after a successful sync."""
-    manifest = load_manifest()
-    now = datetime.now(timezone.utc).isoformat()
+    """Update the manifest entries for a remote after a successful sync. Thread-safe via file lock."""
+    with _manifest_lock():
+        manifest = load_manifest()
+        now = datetime.now(timezone.utc).isoformat()
 
-    if remote_name not in manifest:
-        manifest[remote_name] = {}
+        if remote_name not in manifest:
+            manifest[remote_name] = {}
 
-    for path_str, info in local_manifest.items():
-        manifest[remote_name][path_str] = {
-            "hash": info["hash"],
-            "mtime": info["mtime"],
-            "last_synced": now,
-        }
+        for path_str, info in local_manifest.items():
+            manifest[remote_name][path_str] = {
+                "hash": info["hash"],
+                "mtime": info["mtime"],
+                "last_synced": now,
+            }
 
-    save_manifest(manifest)
+        save_manifest(manifest)
 
 
 def get_remote_manifest(remote_name: str) -> dict[str, SyncedFileEntry]:

@@ -34,6 +34,32 @@ _KNOWN_SENSITIVE = {
     "hasCompletedOnboarding",
 }
 
+# Sensitive keys that must be stripped when found nested inside SAFE_FIELDS values
+# (e.g. env tokens in mcpServers, API keys in projects).
+_NESTED_SENSITIVE_KEYS = {
+    "env",
+    "apiKey",
+    "apiToken",
+    "token",
+    "secret",
+    "password",
+    "credentials",
+}
+
+
+def _strip_sensitive_nested(obj: Any) -> Any:
+    """Recursively remove _NESTED_SENSITIVE_KEYS from dict values.
+
+    Non-dict values (strings, lists, etc.) are returned unchanged.
+    """
+    if not isinstance(obj, dict):
+        return obj
+    return {
+        k: _strip_sensitive_nested(v)
+        for k, v in obj.items()
+        if k not in _NESTED_SENSITIVE_KEYS
+    }
+
 
 def sanitize_claude_json(source: Path = CLAUDE_JSON) -> dict[str, Any]:
     """Read ~/.claude.json and return only fields in SAFE_FIELDS."""
@@ -51,7 +77,18 @@ def sanitize_claude_json(source: Path = CLAUDE_JSON) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"Cannot read {source}: expected a JSON object, got {type(data).__name__}.")
 
-    return {k: v for k, v in data.items() if k in SAFE_FIELDS}
+    # Fields whose values may themselves contain sensitive nested keys
+    _NESTED_STRIP_FIELDS = {"projects", "mcpServers", "customApiKeyConfig"}
+
+    result = {}
+    for k, v in data.items():
+        if k not in SAFE_FIELDS:
+            continue
+        if k in _NESTED_STRIP_FIELDS:
+            result[k] = _strip_sensitive_nested(v)
+        else:
+            result[k] = v
+    return result
 
 
 def write_sanitized_temp(source: Path = CLAUDE_JSON) -> Path:

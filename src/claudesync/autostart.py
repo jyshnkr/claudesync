@@ -1,14 +1,32 @@
 """macOS launchd auto-sync support."""
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
 PLIST_LABEL_PREFIX = "com.claudesync"
 
+_VALID_REMOTE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+
+
+def _validate_remote_name(name: str) -> None:
+    """Raise ValueError if name is not a safe remote identifier.
+
+    Rejects empty strings, names with '/' or '..', and anything that does not
+    match the pattern [a-zA-Z0-9][a-zA-Z0-9._-]*.  This prevents path traversal
+    in the plist file path and XML injection in the generated plist content.
+    """
+    if not name or not _VALID_REMOTE_NAME_RE.match(name) or ".." in name:
+        raise ValueError(
+            f"Remote name {name!r} is invalid. Use only letters, digits, hyphens, "
+            "underscores, and dots. Must not be empty or contain '..' or '/'."
+        )
+
 
 def plist_install_path(remote_name: str) -> Path:
     """Return the LaunchAgents path for a given remote."""
+    _validate_remote_name(remote_name)
     return Path.home() / "Library" / "LaunchAgents" / f"{PLIST_LABEL_PREFIX}.{remote_name}.plist"
 
 
@@ -19,6 +37,7 @@ def generate_plist(
     log_dir: Path | None = None,
 ) -> str:
     """Generate a launchd plist XML string for auto-syncing a remote."""
+    _validate_remote_name(remote_name)
     if log_dir is None:
         log_dir = Path.home() / ".claudesync" / "logs"
 
@@ -59,6 +78,7 @@ def generate_plist(
 
 def install_plist(remote_name: str, claudesync_path: str, interval_seconds: int = 300) -> Path:
     """Write plist to ~/Library/LaunchAgents/ and load it with launchctl."""
+    _validate_remote_name(remote_name)
     log_dir = Path.home() / ".claudesync" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 

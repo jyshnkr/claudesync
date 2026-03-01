@@ -396,6 +396,23 @@ def _local_to_remote_path(local_path: str, project_paths: list[Path], remote: Re
         return local_path
 
 
+def _human_age(mtime: float | None) -> str:
+    """Return human-readable age like '2 hours ago', '3 days ago'."""
+    import time
+    if mtime is None:
+        return "unknown time"
+    delta = time.time() - mtime
+    if delta < 60:
+        return "just now"
+    if delta < 3600:
+        return f"{int(delta / 60)} min ago"
+    if delta < 86400:
+        hours = int(delta / 3600)
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    days = int(delta / 86400)
+    return f"{days} day{'s' if days != 1 else ''} ago"
+
+
 def _print_conflict_report(report: ConflictReport) -> None:
     conflicts = [c for c in report.conflicts if c.state == FileState.CONFLICT]
     if not conflicts:
@@ -403,9 +420,18 @@ def _print_conflict_report(report: ConflictReport) -> None:
 
     console.print(f"\n[yellow]⚠ {len(conflicts)} conflict(s) resolved (last-write-wins):[/yellow]")
     for fc in conflicts:
-        winner_label = f"[green]{fc.winner}[/green]" if fc.winner else "?"
-        backup_note = f" (backup: {fc.backup_path})" if fc.backup_path else ""
-        console.print(f"  {fc.path} → winner: {winner_label}{backup_note}")
+        name = Path(fc.path).name
+        local_age = _human_age(fc.local_mtime)
+        remote_age = _human_age(fc.remote_mtime)
+
+        local_label = "[red]← LOST[/red]" if fc.winner == "remote" else "[green]← WON[/green]"
+        remote_label = "[green]← WON[/green]" if fc.winner == "remote" else "[red]← LOST[/red]"
+
+        console.print(f"  [bold]{name}[/bold]")
+        console.print(f"    local:  modified {local_age}  {local_label}")
+        console.print(f"    remote: modified {remote_age}  {remote_label}")
+        if fc.backup_path:
+            console.print(f"    backup: [dim]{fc.backup_path}[/dim]")
     console.print()
 
 

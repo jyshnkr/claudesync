@@ -210,6 +210,33 @@ def test_local_to_remote_path_unrelated_returned_unchanged(tmp_path, monkeypatch
     assert result == "/etc/passwd"
 
 
+def test_conflict_report_shows_human_readable_winner(capsys):
+    from claudesync.cli import _print_conflict_report
+    from claudesync.conflicts import ConflictReport, FileConflict, FileState
+    import time
+
+    now = time.time()
+    three_days_ago = now - (3 * 86400)
+    two_hours_ago = now - (2 * 3600)
+
+    report = ConflictReport(conflicts=[
+        FileConflict(
+            path="/Users/jay/.claude/settings.json",
+            state=FileState.CONFLICT,
+            local_mtime=three_days_ago,
+            remote_mtime=two_hours_ago,
+            winner="remote",
+            backup_path="/Users/jay/.claudesync/backups/20260228T143052/settings.json",
+        )
+    ])
+    _print_conflict_report(report)
+    captured = capsys.readouterr()
+    assert "LOST" in captured.out or "lost" in captured.out.lower()
+    assert "WON" in captured.out or "won" in captured.out.lower()
+    # Should show relative time, not raw epoch
+    assert "days ago" in captured.out or "hours ago" in captured.out
+
+
 def test_pull_rebuilds_manifest_after_sync(mock_config, connected_engine, tmp_path):
     """After a successful pull, manifest should be rebuilt from post-sync local state."""
     with patch("claudesync.cli.load_config", return_value=mock_config), \

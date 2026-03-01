@@ -133,7 +133,7 @@ Project structure:
 ```text
 .
 ├── src/claudesync/   — Source package
-├── tests/            — Pytest test suite (97 tests)
+├── tests/            — Pytest test suite (108 tests)
 ├── pyproject.toml    — Build configuration
 ├── CHANGELOG.md      — Version history
 └── SECURITY.md       — Security policy

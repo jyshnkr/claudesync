@@ -1,6 +1,7 @@
 """Backup management for conflict resolution."""
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -64,6 +65,11 @@ def restore_backup(backup_id: str, original_path: str | None = None) -> list[Pat
     Otherwise restore all files in the backup.
     Returns list of restored paths.
     """
+    # Validate backup_id is a single safe path segment
+    parts = Path(backup_id).parts
+    if len(parts) != 1 or parts[0] in (".", "..") or os.sep in backup_id:
+        raise ValueError(f"Invalid backup_id: '{backup_id}'")
+
     ts_dir = BACKUP_DIR / backup_id
     # Guard: backup_id must resolve inside BACKUP_DIR
     if not ts_dir.resolve().is_relative_to(BACKUP_DIR.resolve()):

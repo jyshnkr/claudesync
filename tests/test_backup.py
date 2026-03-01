@@ -125,10 +125,11 @@ def test_restore_backup_rejects_path_traversal(tmp_path, backup_dir):
         restore_backup("20260101T000000", "/../../../etc/passwd")
 
 
-def test_restore_backup_rejects_traversal_in_backup_id(backup_dir):
-    """restore_backup must reject backup_id values that escape BACKUP_DIR."""
-    with pytest.raises(ValueError, match="outside backup directory"):
-        restore_backup("../../etc")
+@pytest.mark.parametrize("bad_id", ["..", ".", "a/..", "../etc", "../../etc"])
+def test_restore_backup_rejects_malicious_backup_id(backup_dir, bad_id):
+    """restore_backup must reject backup_id values that are not a single safe segment."""
+    with pytest.raises(ValueError, match="Invalid backup_id"):
+        restore_backup(bad_id)
 
 
 def test_restore_all_rejects_dest_outside_home(tmp_path, backup_dir, monkeypatch):

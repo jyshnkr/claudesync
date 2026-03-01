@@ -7,6 +7,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 from rich.table import Table
+from typing import Optional
 
 from .backup import list_backups, restore_backup
 from .config import Config, Remote, SyncSettings, load_config, save_config
@@ -314,7 +315,7 @@ def backup_list() -> None:
 @backup_app.command("restore")
 def backup_restore(
     backup_id: str = typer.Argument(..., help="Backup ID to restore"),
-    original_path: str | None = typer.Argument(None, help="Specific file to restore (or all files if omitted)"),
+    original_path: Optional[str] = typer.Argument(None, help="Specific file to restore (or all files if omitted)"),
 ) -> None:
     """Restore a backed-up file."""
     try:

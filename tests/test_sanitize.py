@@ -114,3 +114,41 @@ def test_merge_with_no_local_file(tmp_path):
     with local.open() as f:
         merged = json.load(f)
     assert merged["showSpinnerTree"] is True
+
+
+def test_sanitize_strips_primary_api_key(full_claude_json):
+    data = json.loads(full_claude_json.read_text())
+    data["primaryApiKey"] = "sk-ant-secret"
+    full_claude_json.write_text(json.dumps(data))
+
+    result = sanitize_claude_json(full_claude_json)
+    assert "primaryApiKey" not in result
+
+
+def test_sanitize_strips_has_completed_onboarding(full_claude_json):
+    data = json.loads(full_claude_json.read_text())
+    data["hasCompletedOnboarding"] = True
+    full_claude_json.write_text(json.dumps(data))
+
+    result = sanitize_claude_json(full_claude_json)
+    assert "hasCompletedOnboarding" not in result
+
+
+def test_merge_raises_on_corrupted_pulled_json(tmp_path):
+    local = tmp_path / "local.json"
+    local.write_text(json.dumps({"key": "value"}))
+    pulled = tmp_path / "pulled.json"
+    pulled.write_text("this is not json{{{")
+
+    with pytest.raises(ValueError, match="invalid JSON"):
+        merge_pulled_claude_json(pulled, local)
+
+
+def test_merge_raises_on_corrupted_local_json(tmp_path):
+    local = tmp_path / "local.json"
+    local.write_text("not json at all")
+    pulled = tmp_path / "pulled.json"
+    pulled.write_text(json.dumps({"key": "value"}))
+
+    with pytest.raises(ValueError, match="invalid JSON"):
+        merge_pulled_claude_json(pulled, local)

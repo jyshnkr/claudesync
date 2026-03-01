@@ -143,3 +143,63 @@ def test_empty_result():
     r = _empty_result()
     assert r.returncode == 0
     assert r.stdout == ""
+
+
+def test_push_with_project_paths_calls_rsync_per_project(engine, tmp_path):
+    """Engine should call rsync once per PROJECT_SYNC_ITEM per project."""
+    proj = tmp_path / "MyProject"
+    proj.mkdir()
+    (proj / "CLAUDE.md").write_text("# project")
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = ""
+    mock_result.stderr = ""
+
+    with patch("claudesync.engine.subprocess.run", return_value=mock_result) as mock_run:
+        engine.push([proj])
+
+    # At minimum: 1 global call + >=1 project call
+    assert mock_run.call_count >= 2
+
+
+def test_get_remote_file_hashes_raises_on_invalid_json(engine):
+    """If SSH stdout is not JSON (e.g. login banner), SyncError is raised."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "Welcome to server!\nLast login: ..."
+
+    with patch("claudesync.engine.subprocess.run", return_value=mock_result):
+        with pytest.raises(SyncError, match="parse"):
+            engine.get_remote_file_hashes(["/some/file"])
+
+
+def test_rsync_project_aggregates_all_failures(engine, tmp_path):
+    """All per-item rsync failures are aggregated, not just the first."""
+    proj = tmp_path / "Proj"
+    proj.mkdir()
+    # Create all three items so all rsync calls are attempted on push
+    (proj / ".claude").mkdir()
+    (proj / ".claude" / "settings.json").write_text("{}")
+    (proj / "CLAUDE.md").write_text("# x")
+    (proj / ".mcp.json").write_text("{}")
+
+    fail_result = MagicMock()
+    fail_result.returncode = 1
+    fail_result.stdout = ""
+    fail_result.stderr = "error"
+
+    with patch("claudesync.engine.subprocess.run", return_value=fail_result):
+        combined = engine._rsync_project(proj, direction="push", dry_run=False)
+
+    assert combined.returncode != 0
+    # Combined stderr should contain errors from all 3 items
+    assert combined.stderr.count("error") >= 2
+
+
+def test_check_connection_handles_timeout(engine):
+    """TimeoutExpired during SSH connection check returns False."""
+    import subprocess
+    with patch("claudesync.engine.subprocess.run",
+               side_effect=subprocess.TimeoutExpired(cmd="ssh", timeout=10)):
+        assert engine.check_connection() is False

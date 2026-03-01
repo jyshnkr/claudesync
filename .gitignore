@@ -1,3 +1,4 @@
 /.pytest_cache
 .claude/
 *__pycache__
+.venv/

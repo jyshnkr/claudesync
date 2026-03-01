@@ -322,7 +322,7 @@ def pull(
             tmp_claude_json.unlink(missing_ok=True)
 
     if not summary.errors:
-        update_manifest_for_remote(remote_name, build_local_manifest(_collect_local_files(project_paths)))
+        update_manifest_for_remote(remote_name, build_local_manifest(_collect_local_files(project_paths, include_history=config.sync.include_history)))
 
     _print_summary(summary, "pull")
 

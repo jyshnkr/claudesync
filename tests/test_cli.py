@@ -274,6 +274,40 @@ def test_pair_command_adds_remote_tests_connection_and_pushes(mock_config, mock_
     assert "paired" in result.output.lower() or "push" in result.output.lower()
 
 
+def test_pull_manifest_rebuild_passes_include_history(mock_config, connected_engine, tmp_path):
+    """Post-pull manifest rebuild must pass include_history from config to _collect_local_files.
+
+    The pull command calls _collect_local_files twice: once for _build_manifests and once
+    for the post-sync manifest rebuild. Both calls must pass include_history=True when
+    config.sync.include_history is True. We patch _collect_local_files directly to capture
+    every call signature.
+    """
+    mock_config.sync.include_history = True
+
+    with patch("claudesync.cli.load_config", return_value=mock_config), \
+         patch("claudesync.cli.Engine", return_value=connected_engine), \
+         patch("claudesync.cli._collect_local_files", return_value=[]) as mock_collect, \
+         patch("claudesync.cli.build_local_manifest", return_value={}), \
+         patch("claudesync.cli.get_remote_manifest", return_value={}), \
+         patch("claudesync.cli.update_manifest_for_remote"), \
+         patch("claudesync.cli.merge_pulled_claude_json"), \
+         patch("tempfile.NamedTemporaryFile") as mock_ntf:
+        tmp_file = tmp_path / "empty.json"
+        tmp_file.write_text("")
+        mock_ntf.return_value.__enter__.return_value.name = str(tmp_file)
+
+        result = runner.invoke(app, ["pull", REMOTE_NAME])
+
+    assert result.exit_code == 0
+    # _collect_local_files is called once in _build_manifests and once for post-sync rebuild.
+    # Both calls must include include_history=True.
+    assert mock_collect.call_count >= 2, "Expected at least 2 calls to _collect_local_files"
+    for c in mock_collect.call_args_list:
+        assert c.kwargs.get("include_history") is True, (
+            f"_collect_local_files called without include_history=True: {c}"
+        )
+
+
 def test_pull_rebuilds_manifest_after_sync(mock_config, connected_engine, tmp_path):
     """After a successful pull, manifest should be rebuilt from post-sync local state."""
     with patch("claudesync.cli.load_config", return_value=mock_config), \

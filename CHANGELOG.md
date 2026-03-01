@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-01
+
+### Security
+- Use a dedicated `~/.claudesync/known_hosts` file for SSH host key storage (separate from `~/.ssh/known_hosts`) so rogue re-keys are caught on subsequent connections
+- Flip `.claude.json` sanitizer from blocklist to **allowlist**: only explicitly safe fields (`theme`, `numStartups`, `projects`, etc.) are synced — unknown future fields are stripped by default, preventing silent data exfiltration
+
+### Fixed
+- Add `fcntl.LOCK_EX` file locking to `update_manifest_for_remote()` to prevent lost updates when two concurrent syncs race on the manifest file
+- Replace the SSH Python one-liner for remote file hashing with a versioned sidecar script (`remote_agent.py`) deployed to `~/.claudesync/` on the remote — eliminates shell quoting edge cases and SSH banner pollution
+
+### Changed
+- `history.jsonl` is now **opt-in**: set `sync.include_history = true` in `~/.claudesync/config.toml` to sync conversation history. Default is `false` since the file contains full conversation history, pasted code, and internal project data
+
+### Added
+- `claudesync pair --name <n> --address user@host` — one-command two-machine setup: tests SSH, auto-detects remote home, saves config, and runs an initial push
+- `claudesync autostart enable <remote>` / `disable <remote>` — installs/removes a macOS launchd plist (`~/Library/LaunchAgents/com.claudesync.<remote>.plist`) to auto-pull every N seconds (default 5 min)
+- `_human_age()` helper: conflict output now shows `← LOST / ← WON` labels and human-readable relative timestamps (`3 days ago`, `2 hours ago`) so users understand why a conflict was resolved the way it was
+- 35 new tests (88 → 123 total)
+
 ## [0.2.0] - 2026-03-01
 
 ### Security

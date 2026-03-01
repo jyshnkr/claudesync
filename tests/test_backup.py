@@ -3,7 +3,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch
 
-from claudesync.backup import backup_file, list_backups, restore_backup
+from claudesync.backup import _atomic_copy, backup_file, list_backups, restore_backup
 
 
 @pytest.fixture
@@ -158,3 +158,27 @@ def test_restore_all_rejects_dest_outside_home(tmp_path, backup_dir, monkeypatch
 
     with pytest.raises(ValueError, match="outside home directory"):
         restore_backup("20260101T000000")
+
+
+def test_atomic_copy_rejects_symlink_dest(tmp_path):
+    """_atomic_copy must reject dest that is already a symlink."""
+    src = tmp_path / "src.txt"
+    src.write_text("data")
+    real = tmp_path / "real.txt"
+    real.write_text("x")
+    link = tmp_path / "link.txt"
+    link.symlink_to(real)
+    with pytest.raises(ValueError, match="symlink"):
+        _atomic_copy(src, link)
+
+
+def test_atomic_copy_rejects_symlink_parent(tmp_path):
+    """_atomic_copy must reject dest whose parent directory is a symlink."""
+    src = tmp_path / "src.txt"
+    src.write_text("data")
+    real_dir = tmp_path / "real_dir"
+    real_dir.mkdir()
+    link_dir = tmp_path / "link_dir"
+    link_dir.symlink_to(real_dir)
+    with pytest.raises(ValueError, match="symlink"):
+        _atomic_copy(src, link_dir / "dest.txt")

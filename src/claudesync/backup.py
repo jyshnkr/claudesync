@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import shutil
-import tempfile
+import stat
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -115,20 +115,48 @@ def restore_backup(backup_id: str, original_path: str | None = None) -> list[Pat
 
 
 def _atomic_copy(src: Path, dest: Path) -> None:
-    """Copy src to dest atomically via a temp file to prevent symlink races."""
+    """Copy src to dest atomically via a temp file in the same directory.
+
+    Opens dest.parent with O_NOFOLLOW|O_DIRECTORY, verifies its inode hasn't
+    changed since the lstat, then creates the temp file with os.openat against
+    the held dirfd. This closes the TOCTOU window between the symlink check
+    and the write.
+    """
+    try:
+        parent_lstat = os.lstat(dest.parent)
+    except FileNotFoundError:
+        raise ValueError(f"Restore destination parent does not exist: '{dest.parent}'")
+    if stat.S_ISLNK(parent_lstat.st_mode):
+        raise ValueError(f"Restore destination parent is a symlink: '{dest.parent}'")
     if dest.is_symlink():
         raise ValueError(f"Restore destination is a symlink: '{dest}'")
-    if dest.parent.is_symlink():
-        raise ValueError(f"Restore destination parent is a symlink: '{dest.parent}'")
-    fd = tempfile.NamedTemporaryFile(dir=dest.parent, delete=False)
-    tmp = Path(fd.name)
-    fd.close()
+
+    dirfd = os.open(
+        str(dest.parent),
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+    )
+    tmp: Path | None = None
     try:
+        dir_fstat = os.fstat(dirfd)
+        if (dir_fstat.st_ino, dir_fstat.st_dev) != (parent_lstat.st_ino, parent_lstat.st_dev):
+            raise ValueError(f"Restore destination parent was replaced: '{dest.parent}'")
+        tmp_name = f".claudesync_tmp_{os.urandom(8).hex()}"
+        tmp = dest.parent / tmp_name
+        if hasattr(os, "openat"):
+            raw_fd = os.openat(dirfd, tmp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        else:
+            # openat unavailable (some platforms/builds): fall back to full path.
+            # The dirfd inode check above already ensures dest.parent is authentic.
+            raw_fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(raw_fd)
         shutil.copy2(src, tmp)
         os.replace(tmp, dest)
     except BaseException:
-        tmp.unlink(missing_ok=True)
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
         raise
+    finally:
+        os.close(dirfd)
 
 
 def _rotate_backups(keep_count: int) -> None:

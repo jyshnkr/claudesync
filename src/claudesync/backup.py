@@ -124,8 +124,8 @@ def _atomic_copy(src: Path, dest: Path) -> None:
     """
     try:
         parent_lstat = os.lstat(dest.parent)
-    except FileNotFoundError:
-        raise ValueError(f"Restore destination parent does not exist: '{dest.parent}'")
+    except FileNotFoundError as e:
+        raise ValueError(f"Restore destination parent does not exist: '{dest.parent}'") from e
     if stat.S_ISLNK(parent_lstat.st_mode):
         raise ValueError(f"Restore destination parent is a symlink: '{dest.parent}'")
     if dest.is_symlink():

@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Flip `.claude.json` sanitizer from blocklist to **allowlist**: only explicitly safe fields (`theme`, `numStartups`, `projects`, etc.) are synced — unknown future fields are stripped by default, preventing silent data exfiltration
 - Validate `autostart` remote_name with strict regex (`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`); reject empty, `..`, or `/` — prevents path traversal in plist path and XML injection
 - Recursively strip sensitive nested keys (`env`, `apiKey`, `token`, `secret`, `password`, etc.) from `mcpServers` and `projects` values in `.claude.json` sanitization
+- XML-escape all user-supplied plist values via `xml.sax.saxutils.escape` to prevent plist injection
+- Use absolute `/bin/launchctl` path in `autostart.py` to prevent CWE-426 PATH hijacking
+- Case-insensitive matching for nested sensitive key names in the `.claude.json` sanitizer
 
 ### Fixed
 
@@ -23,9 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Harden `engine._ensure_remote_agent`: catch `TimeoutExpired` on version check (treat as "not present"), and on deploy (raise `SyncError`); catch `FileNotFoundError` on both
 - `remote_agent.hash_files`: skip unreadable files with `try/except (OSError, IOError): continue`
 - `remote_agent.__main__`: validate JSON arg is `list[str]`; `sys.exit(1)` for dict, non-string list, etc.
+- `claudesync pair`: wrap SSH `echo $HOME` probe in `try/except` for `TimeoutExpired`/`OSError`
 - `claudesync pair`: show "✓ Paired!" celebration only when push has no errors
 - `claudesync autostart enable`: reject `--interval <= 0`
 - `claudesync autostart disable`: add macOS platform check; wrap `uninstall_plist` in try/except
+- `uninstall_plist`: catch `FileNotFoundError` when launchctl binary is missing
+- `merge_pulled_claude_json`: strip sensitive nested keys from remote overlay before merging
+- CLI autostart handlers catch `ValueError` alongside `CalledProcessError`
+- Proper exception chaining (`raise ... from e`) throughout
+- Sanitize lists recursively inside nested-strip fields (not just dicts)
 
 ### Changed
 
@@ -37,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `claudesync pair --name <n> --address user@host` — one-command two-machine setup: tests SSH, auto-detects remote home, saves config, and runs an initial push
 - `claudesync autostart enable <remote>` / `disable <remote>` — installs/removes a macOS launchd plist (`~/Library/LaunchAgents/com.claudesync.<remote>.plist`) to auto-pull every N seconds (default 5 min)
 - `_human_age()` helper: conflict output now shows `← LOST / ← WON` labels and human-readable relative timestamps (`3 days ago`, `2 hours ago`) so users understand why a conflict was resolved the way it was
-- ~20 new tests addressing PR #8 review comments (total 140+)
+- 47 new tests addressing PR #8 review comments (total 155)
 
 ## [0.2.0] - 2026-03-01
 

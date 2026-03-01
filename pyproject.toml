@@ -23,6 +23,11 @@ dev = [
     "pytest-mock>=3.0.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/jyshnkr/claudesync"
+Repository = "https://github.com/jyshnkr/claudesync"
+Changelog = "https://github.com/jyshnkr/claudesync/blob/main/CHANGELOG.md"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/claudesync"]
 

@@ -56,11 +56,11 @@ class Engine:
         except FileNotFoundError:
             return False
 
-    def push(self, project_paths: list[Path], sanitized_claude_json: Path | None = None, include_history: bool = False) -> SyncSummary:
+    def push(self, project_paths: list[Path], sanitized_claude_json: Path | None = None, *, include_history: bool = False) -> SyncSummary:
         """Push local context to remote. Returns SyncSummary."""
         return self._sync("push", project_paths, claude_json_path=sanitized_claude_json, include_history=include_history)
 
-    def pull(self, project_paths: list[Path], temp_claude_json_dest: Path | None = None, include_history: bool = False) -> SyncSummary:
+    def pull(self, project_paths: list[Path], temp_claude_json_dest: Path | None = None, *, include_history: bool = False) -> SyncSummary:
         """Pull remote context to local. Returns SyncSummary."""
         return self._sync("pull", project_paths, claude_json_path=temp_claude_json_dest, include_history=include_history)
 
@@ -69,6 +69,7 @@ class Engine:
         direction: SyncDirection,
         project_paths: list[Path],
         claude_json_path: Path | None = None,
+        *,
         include_history: bool = False,
     ) -> SyncSummary:
         """Internal: run rsync for global, per-project, and .claude.json."""
@@ -96,7 +97,7 @@ class Engine:
 
         return summary
 
-    def dry_run(self, project_paths: list[Path], direction: SyncDirection = "push", include_history: bool = False) -> str:
+    def dry_run(self, project_paths: list[Path], direction: SyncDirection = "push", *, include_history: bool = False) -> str:
         """Run rsync --dry-run, return combined output for display."""
         lines: list[str] = []
 

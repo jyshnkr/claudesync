@@ -273,6 +273,13 @@ def test_ensure_remote_agent_handles_deploy_timeout(engine, mock_run):
         engine.get_remote_file_hashes(["/some/file"])
 
 
+def test_push_include_history_is_keyword_only(engine):
+    """include_history must be keyword-only — passing it positionally must raise TypeError."""
+    with pytest.raises(TypeError):
+        # project_paths=[], sanitized_claude_json=None, then True as positional 3rd arg
+        engine.push([], None, True)
+
+
 def test_ssh_uses_dedicated_known_hosts_file(engine):
     """SSH must use a project-local known_hosts, not pollute ~/.ssh/known_hosts."""
     cmd = engine._ssh_cmd()

@@ -86,18 +86,26 @@ def test_load_manifest_rejects_non_dict_json(manifest_file):
 
 
 def test_manifest_update_is_serialized(tmp_path, monkeypatch):
-    """Concurrent manifest updates must not lose data."""
+    """Concurrent manifest updates must not lose data.
+
+    Uses threading.Barrier to ensure all threads are ready before any of them
+    starts updating, maximising the chance of exposing race conditions.
+    """
     import threading
     monkeypatch.setattr("claudesync.manifest.MANIFEST_FILE", tmp_path / "manifest.json")
     monkeypatch.setattr("claudesync.manifest.LOCK_FILE", tmp_path / "manifest.lock")
 
+    n = 5
+    barrier = threading.Barrier(n)
+
     def update_remote(name):
+        barrier.wait()  # all threads start simultaneously
         manifest_data = {name: {"hash": "abc", "mtime": 1.0}}
         update_manifest_for_remote(name, manifest_data)
 
     threads = [
         threading.Thread(target=update_remote, args=(f"remote{i}",))
-        for i in range(5)
+        for i in range(n)
     ]
     for t in threads:
         t.start()
@@ -106,5 +114,5 @@ def test_manifest_update_is_serialized(tmp_path, monkeypatch):
 
     # All 5 remotes must be present — none overwritten
     saved = load_manifest()
-    for i in range(5):
+    for i in range(n):
         assert f"remote{i}" in saved, f"remote{i} was lost due to race condition"

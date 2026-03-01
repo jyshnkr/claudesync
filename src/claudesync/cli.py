@@ -11,7 +11,7 @@ from rich.table import Table
 from .backup import list_backups, restore_backup
 from .config import Config, Remote, SyncSettings, load_config, save_config
 from .conflicts import ConflictReport, FileState, apply_conflict_resolutions, detect_conflicts
-from .engine import Engine
+from .engine import Engine, SyncSummary
 from .filters import PROJECT_SYNC_ITEMS, get_global_include_paths
 from .manifest import (
     build_local_manifest,
@@ -188,7 +188,7 @@ def push(
         finally:
             sanitized_tmp.unlink(missing_ok=True)
 
-    if not summary["errors"]:
+    if not summary.errors:
         update_manifest_for_remote(remote_name, local_manifest)
 
     _print_summary(summary, "push")
@@ -225,7 +225,7 @@ def pull(
         finally:
             tmp_claude_json.unlink(missing_ok=True)
 
-    if not summary["errors"]:
+    if not summary.errors:
         update_manifest_for_remote(remote_name, local_manifest)
 
     _print_summary(summary, "pull")
@@ -375,10 +375,10 @@ def _print_conflict_report(report: ConflictReport) -> None:
     console.print()
 
 
-def _print_summary(summary: dict, direction: str) -> None:
+def _print_summary(summary: SyncSummary, direction: str) -> None:
     arrow = "→" if direction == "push" else "←"
-    n = summary.get("files_transferred", 0)
-    errors = summary.get("errors", [])
+    n = summary.files_transferred
+    errors = summary.errors
 
     console.print(f"\n[bold green]✓ {direction.capitalize()} complete[/bold green]")
     console.print(f"  {arrow} {n} file(s) transferred")

@@ -5,15 +5,24 @@ import json
 import shlex
 import subprocess
 import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from .config import Remote
 from .filters import build_global_filter_args, PROJECT_SYNC_ITEMS
 
+SyncDirection = Literal["push", "pull"]
+
 
 class SyncError(Exception):
     pass
+
+
+@dataclass
+class SyncSummary:
+    files_transferred: int = 0
+    errors: list[str] = field(default_factory=list)
 
 
 class Engine:
@@ -39,45 +48,45 @@ class Engine:
         except FileNotFoundError:
             return False
 
-    def push(self, project_paths: list[Path], sanitized_claude_json: Path | None = None) -> dict[str, Any]:
-        """Push local context to remote. Returns summary dict."""
+    def push(self, project_paths: list[Path], sanitized_claude_json: Path | None = None) -> SyncSummary:
+        """Push local context to remote. Returns SyncSummary."""
         return self._sync("push", project_paths, claude_json_path=sanitized_claude_json)
 
-    def pull(self, project_paths: list[Path], temp_claude_json_dest: Path | None = None) -> dict[str, Any]:
-        """Pull remote context to local. Returns summary dict."""
+    def pull(self, project_paths: list[Path], temp_claude_json_dest: Path | None = None) -> SyncSummary:
+        """Pull remote context to local. Returns SyncSummary."""
         return self._sync("pull", project_paths, claude_json_path=temp_claude_json_dest)
 
     def _sync(
         self,
-        direction: str,
+        direction: SyncDirection,
         project_paths: list[Path],
         claude_json_path: Path | None = None,
-    ) -> dict[str, Any]:
+    ) -> SyncSummary:
         """Internal: run rsync for global, per-project, and .claude.json."""
-        summary: dict[str, Any] = {"files_transferred": 0, "errors": []}
+        summary = SyncSummary()
 
         # Step 1: global ~/.claude/
         result = self._rsync_global(direction=direction, dry_run=False)
-        summary["files_transferred"] += _count_transferred(result.stdout)
+        summary.files_transferred += _count_transferred(result.stdout)
         if result.returncode != 0:
-            summary["errors"].append(result.stderr)
+            summary.errors.append(result.stderr)
 
         # Step 2: per-project context
         for proj in project_paths:
             res = self._rsync_project(proj, direction=direction, dry_run=False)
-            summary["files_transferred"] += _count_transferred(res.stdout)
+            summary.files_transferred += _count_transferred(res.stdout)
             if res.returncode != 0:
-                summary["errors"].append(res.stderr)
+                summary.errors.append(res.stderr)
 
         # Step 3: .claude.json (sanitized on push, temp dest on pull)
         if claude_json_path:
             res = self._rsync_claude_json(claude_json_path, direction=direction, dry_run=False)
             if res.returncode != 0:
-                summary["errors"].append(res.stderr)
+                summary.errors.append(res.stderr)
 
         return summary
 
-    def dry_run(self, project_paths: list[Path], direction: str = "push") -> str:
+    def dry_run(self, project_paths: list[Path], direction: SyncDirection = "push") -> str:
         """Run rsync --dry-run, return combined output for display."""
         lines: list[str] = []
 
@@ -158,7 +167,7 @@ class Engine:
             cmd.append("--dry-run")
         return cmd
 
-    def _rsync_global(self, direction: str, dry_run: bool) -> subprocess.CompletedProcess:
+    def _rsync_global(self, direction: SyncDirection, dry_run: bool) -> subprocess.CompletedProcess:
         """Sync ~/.claude/ directory."""
         local = str(Path.home() / ".claude") + "/"
         remote = f"{self.remote.address}:{self.remote.remote_home}/.claude/"
@@ -174,7 +183,7 @@ class Engine:
 
         return subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
-    def _rsync_project(self, project_path: Path, direction: str, dry_run: bool) -> subprocess.CompletedProcess:
+    def _rsync_project(self, project_path: Path, direction: SyncDirection, dry_run: bool) -> subprocess.CompletedProcess:
         """Sync per-project files (.claude/settings.json, CLAUDE.md, .mcp.json)."""
         results: list[subprocess.CompletedProcess] = []
         remote_proj = f"{self.remote.address}:{self.remote.remote_home}/{project_path.name}/"
@@ -212,7 +221,7 @@ class Engine:
     def _rsync_claude_json(
         self,
         local_file: Path,
-        direction: str,
+        direction: SyncDirection,
         dry_run: bool,
     ) -> subprocess.CompletedProcess:
         """Sync .claude.json (sanitized version on push, pulled version on pull)."""

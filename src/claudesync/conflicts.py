@@ -5,7 +5,9 @@ import dataclasses
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+WinnerSide = Literal["local", "remote"]
 
 from .backup import backup_file
 
@@ -25,7 +27,7 @@ class FileConflict:
     state: FileState
     local_mtime: float | None
     remote_mtime: float | None
-    winner: str | None  # "local" or "remote" or None if no conflict
+    winner: WinnerSide | None  # "local" or "remote" — None if no conflict
     backup_path: str | None = None
 
 
@@ -154,7 +156,7 @@ def apply_conflict_resolutions(
     return ConflictReport(conflicts=updated)
 
 
-def _resolve_by_mtime(local_mtime: float | None, remote_mtime: float | None) -> str:
+def _resolve_by_mtime(local_mtime: float | None, remote_mtime: float | None) -> WinnerSide:
     """Return 'local' or 'remote' based on which mtime is newer."""
     if local_mtime is None:
         return "remote"

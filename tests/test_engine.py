@@ -69,7 +69,7 @@ def test_push_calls_rsync(engine, tmp_path):
         summary = engine.push([], sanitized_claude_json=sanitized)
 
     assert mock_run.called
-    assert summary["errors"] == []
+    assert summary.errors == []
 
 
 def test_pull_calls_rsync(engine, tmp_path):
@@ -82,7 +82,7 @@ def test_pull_calls_rsync(engine, tmp_path):
         summary = engine.pull([])
 
     assert mock_run.called
-    assert summary["errors"] == []
+    assert summary.errors == []
 
 
 def test_dry_run_returns_output(engine):

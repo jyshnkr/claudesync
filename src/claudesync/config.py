@@ -4,7 +4,11 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Literal
+
+SyncStrategy = Literal["last-write-wins"]
+"""Conflict resolution strategy. Only 'last-write-wins' is implemented; the
+field is persisted to allow future strategies without a schema change."""
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -39,7 +43,7 @@ class Remote:
 
 @dataclass
 class SyncSettings:
-    strategy: str = "last-write-wins"
+    strategy: SyncStrategy = "last-write-wins"
     backup_count: int = 10
 
     def __post_init__(self) -> None:

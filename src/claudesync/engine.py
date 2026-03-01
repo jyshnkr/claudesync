@@ -170,7 +170,7 @@ class Engine:
             cmd.append("--dry-run")
         return cmd
 
-    def _rsync_global(self, direction: SyncDirection, dry_run: bool) -> subprocess.CompletedProcess:
+    def _rsync_global(self, *, direction: SyncDirection, dry_run: bool) -> subprocess.CompletedProcess:
         """Sync ~/.claude/ directory."""
         local = str(Path.home() / ".claude") + "/"
         remote = f"{self.remote.address}:{self.remote.remote_home}/.claude/"
@@ -186,7 +186,7 @@ class Engine:
 
         return subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
-    def _rsync_project(self, project_path: Path, direction: SyncDirection, dry_run: bool) -> subprocess.CompletedProcess:
+    def _rsync_project(self, project_path: Path, *, direction: SyncDirection, dry_run: bool) -> subprocess.CompletedProcess:
         """Sync per-project files (.claude/settings.json, CLAUDE.md, .mcp.json)."""
         results: list[subprocess.CompletedProcess] = []
         remote_proj = f"{self.remote.address}:{self.remote.remote_home}/{project_path.name}/"

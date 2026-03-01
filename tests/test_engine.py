@@ -194,7 +194,7 @@ def test_rsync_project_aggregates_all_failures(engine, tmp_path):
 
     assert combined.returncode != 0
     # Combined stderr should contain errors from all 3 items
-    assert combined.stderr.count("error") >= 2
+    assert combined.stderr.count("error") == 3
 
 
 def test_check_connection_handles_timeout(engine):

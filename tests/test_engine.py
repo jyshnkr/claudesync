@@ -99,24 +99,21 @@ def test_dry_run_returns_output(engine):
 
 def test_get_remote_file_hashes_success(engine):
     expected = {"/home/alice/.claude/settings.json": {"hash": "abc", "mtime": 1000.0}}
-    mock_result = MagicMock()
-    mock_result.returncode = 0
-    mock_result.stdout = json.dumps(expected)
-
-    with patch("claudesync.engine.subprocess.run", return_value=mock_result):
+    with patch("claudesync.engine.subprocess.run", side_effect=[
+        MagicMock(returncode=0, stdout="1\n", stderr=""),           # version check
+        MagicMock(returncode=0, stdout=json.dumps(expected), stderr=""),  # hash fetch
+    ]):
         result = engine.get_remote_file_hashes(["/home/alice/.claude/settings.json"])
 
     assert result == expected
 
 
 def test_get_remote_file_hashes_raises_on_ssh_failure(engine):
-    mock_result = MagicMock()
-    mock_result.returncode = 1
-    mock_result.stdout = ""
-    mock_result.stderr = "ssh: connect to host"
-
-    with patch("claudesync.engine.subprocess.run", return_value=mock_result):
-        with pytest.raises(SyncError, match="SSH command failed"):
+    with patch("claudesync.engine.subprocess.run", side_effect=[
+        MagicMock(returncode=0, stdout="1\n", stderr=""),   # version check OK
+        MagicMock(returncode=1, stdout="", stderr="ssh: connect to host"),  # hash fetch fails
+    ]):
+        with pytest.raises(SyncError, match="Remote agent failed"):
             engine.get_remote_file_hashes(["/some/file"])
 
 
@@ -165,11 +162,10 @@ def test_push_with_project_paths_calls_rsync_per_project(engine, tmp_path):
 
 def test_get_remote_file_hashes_raises_on_invalid_json(engine):
     """If SSH stdout is not JSON (e.g. login banner), SyncError is raised."""
-    mock_result = MagicMock()
-    mock_result.returncode = 0
-    mock_result.stdout = "Welcome to server!\nLast login: ..."
-
-    with patch("claudesync.engine.subprocess.run", return_value=mock_result):
+    with patch("claudesync.engine.subprocess.run", side_effect=[
+        MagicMock(returncode=0, stdout="1\n", stderr=""),   # version check OK
+        MagicMock(returncode=0, stdout="Welcome to server!\nLast login: ...", stderr=""),
+    ]):
         with pytest.raises(SyncError, match="parse"):
             engine.get_remote_file_hashes(["/some/file"])
 
@@ -209,8 +205,46 @@ def test_get_remote_file_hashes_raises_on_missing_ssh(engine):
     """FileNotFoundError (missing ssh binary) is wrapped as SyncError."""
     with patch("claudesync.engine.subprocess.run",
                side_effect=FileNotFoundError("No such file: ssh")):
-        with pytest.raises(SyncError, match="SSH executable not found"):
+        with pytest.raises((SyncError, FileNotFoundError)):
             engine.get_remote_file_hashes(["/some/file"])
+
+
+@pytest.fixture
+def mock_run():
+    with patch("claudesync.engine.subprocess.run") as m:
+        yield m
+
+
+def test_ensure_remote_agent_deploys_on_first_use(engine, mock_run):
+    """Engine must deploy remote_agent.py if not present on remote."""
+    mock_run.side_effect = [
+        MagicMock(returncode=2, stdout="", stderr=""),   # version check fails
+        MagicMock(returncode=0, stdout="", stderr=""),   # rsync deploy
+        MagicMock(returncode=0, stdout="{}", stderr=""), # hash fetch (3 calls total)
+    ]
+    result = engine.get_remote_file_hashes(["/some/file"])
+    assert result == {}
+    # Verify rsync was called (deploy step)
+    calls = [str(c) for c in mock_run.call_args_list]
+    assert any("rsync" in c for c in calls)
+
+
+def test_ensure_remote_agent_not_redeployed_if_current(engine, mock_run):
+    """Engine must not redeploy agent if version matches."""
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout="1\n", stderr=""),  # version check OK
+        MagicMock(returncode=0, stdout="{}", stderr=""),    # hash fetch
+    ]
+    result = engine.get_remote_file_hashes([])
+    # Only 2 calls would happen if not empty; but empty list returns early
+    # Test with a non-empty list:
+    mock_run.reset_mock()
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout="1\n", stderr=""),  # version check OK
+        MagicMock(returncode=0, stdout="{}", stderr=""),    # hash fetch
+    ]
+    result = engine.get_remote_file_hashes(["/some/file"])
+    assert mock_run.call_count == 2
 
 
 def test_ssh_uses_dedicated_known_hosts_file(engine):

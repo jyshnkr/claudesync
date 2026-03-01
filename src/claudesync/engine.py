@@ -14,6 +14,14 @@ from .filters import build_global_filter_args, PROJECT_SYNC_ITEMS
 
 SyncDirection = Literal["push", "pull"]
 
+AGENT_VERSION = "1"
+REMOTE_AGENT_PATH = "~/.claudesync/remote_agent.py"
+
+
+def _get_agent_script_path() -> Path:
+    """Return path to the bundled remote_agent.py."""
+    return Path(__file__).parent / "remote_agent.py"
+
 
 class SyncError(Exception):
     pass
@@ -109,23 +117,20 @@ class Engine:
 
     def get_remote_file_hashes(self, file_paths: list[str]) -> dict[str, dict[str, Any]]:
         """
-        SSH to remote and compute SHA-256 + mtime for each path.
+        SSH to remote, compute SHA-256 + mtime for each path via deployed agent.
+        Deploys/updates the agent if missing or outdated.
         Returns { path: { hash, mtime } } for files that exist.
         """
         if not file_paths:
             return {}
 
-        # Build a small Python one-liner to run on remote
+        try:
+            self._ensure_remote_agent()
+        except FileNotFoundError as e:
+            raise SyncError(f"SSH executable not found: {e}") from e
+
         paths_json = json.dumps(file_paths)
-        script = (
-            "import json, hashlib, os, sys; "
-            "paths = json.loads(sys.argv[1]); "
-            "result = {}; "
-            "[result.update({p: {'hash': hashlib.sha256(open(p,'rb').read()).hexdigest(), 'mtime': os.stat(p).st_mtime}}) "
-            " for p in paths if os.path.isfile(p)]; "
-            "print(json.dumps(result))"
-        )
-        cmd = self._ssh_cmd() + ["python3", "-c", script, shlex.quote(paths_json)]
+        cmd = self._ssh_cmd() + ["python3", REMOTE_AGENT_PATH, shlex.quote(paths_json)]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         except subprocess.TimeoutExpired as e:
@@ -133,13 +138,35 @@ class Engine:
         except FileNotFoundError as e:
             raise SyncError(f"SSH executable not found: {e}") from e
         if result.returncode != 0:
-            raise SyncError(f"SSH command failed: {result.stderr.strip()}")
+            raise SyncError(f"Remote agent failed: {result.stderr.strip()}")
         try:
             return json.loads(result.stdout.strip())
         except json.JSONDecodeError as e:
             raise SyncError(
-                f"Could not parse remote file hashes (SSH banner pollution?): {e}"
+                f"Could not parse remote file hashes (SSH banner pollution?): {e}\n"
+                f"Raw output: {result.stdout[:200]!r}"
             ) from e
+
+    def _ensure_remote_agent(self) -> None:
+        """Deploy remote_agent.py to remote if missing or version-mismatched."""
+        version_cmd = self._ssh_cmd() + ["python3", REMOTE_AGENT_PATH, "--version"]
+        result = subprocess.run(version_cmd, capture_output=True, text=True, timeout=10)
+
+        if result.returncode == 0 and result.stdout.strip() == AGENT_VERSION:
+            return  # agent present and current
+
+        # Deploy via rsync
+        agent_src = _get_agent_script_path()
+        remote_dir = f"{self.remote.address}:{self.remote.remote_home}/.claudesync/"
+        deploy_cmd = [
+            "rsync", "-az", "-e", " ".join(self._ssh_opt()),
+            str(agent_src), remote_dir,
+        ]
+        res = subprocess.run(deploy_cmd, capture_output=True, text=True, timeout=30)
+        if res.returncode != 0:
+            raise SyncError(
+                f"Failed to deploy remote agent to {self.remote.address}: {res.stderr.strip()}"
+            )
 
     # ------------------------------------------------------------------
     # Internal helpers

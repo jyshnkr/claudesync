@@ -30,10 +30,12 @@ app = typer.Typer(
 remote_app = typer.Typer(help="Manage remote machines.", no_args_is_help=True)
 project_app = typer.Typer(help="Manage registered projects.", no_args_is_help=True)
 backup_app = typer.Typer(help="Manage conflict backups.", no_args_is_help=True)
+autostart_app = typer.Typer(help="Manage auto-sync on macOS.", no_args_is_help=True)
 
 app.add_typer(remote_app, name="remote")
 app.add_typer(project_app, name="project")
 app.add_typer(backup_app, name="backup")
+app.add_typer(autostart_app, name="autostart")
 
 console = Console()
 
@@ -540,3 +542,52 @@ def _print_summary(summary: SyncSummary, direction: str) -> None:
         console.print(f"\n[yellow]Warnings:[/yellow]")
         for err in errors:
             console.print(f"  {err.strip()}")
+
+
+# ---------------------------------------------------------------------------
+# autostart (macOS launchd)
+# ---------------------------------------------------------------------------
+
+@autostart_app.command("enable")
+def autostart_enable(
+    remote_name: str = typer.Argument(..., help="Remote name to auto-pull from"),
+    interval: int = typer.Option(300, "--interval", "-i", help="Sync interval in seconds (default 300 = 5 min)"),
+) -> None:
+    """Install a launchd job to auto-pull from a remote every N seconds."""
+    import platform
+    if platform.system() != "Darwin":
+        console.print("[red]autostart is macOS-only (uses launchd).[/red]")
+        raise typer.Exit(1)
+
+    config = load_config()
+    try:
+        config.get_remote(remote_name)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+    import shutil
+    claudesync_path = shutil.which("claudesync") or "claudesync"
+
+    from .autostart import install_plist
+    try:
+        plist_path = install_plist(remote_name, claudesync_path, interval)
+        console.print(f"[green]✓ Auto-sync enabled for '{remote_name}'[/green]")
+        console.print(f"  Interval: every {interval}s")
+        console.print(f"  Plist:    {plist_path}")
+        console.print(f"  Logs:     ~/.claudesync/logs/autosync-{remote_name}.log")
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]Failed to load plist: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@autostart_app.command("disable")
+def autostart_disable(
+    remote_name: str = typer.Argument(..., help="Remote name to stop auto-syncing"),
+) -> None:
+    """Remove the launchd auto-sync job for a remote."""
+    from .autostart import uninstall_plist
+    if uninstall_plist(remote_name):
+        console.print(f"[green]✓ Auto-sync disabled for '{remote_name}'[/green]")
+    else:
+        console.print(f"[dim]No auto-sync job found for '{remote_name}'[/dim]")
